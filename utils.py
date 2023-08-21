@@ -14,7 +14,7 @@ import matplotlib.pylab as plt
 import seaborn as sns
 
 
-def get_xy(rec1, bin_size, rec2=None):
+def select_data(rec1, bin_size, rec2=None):
     # TODO implement mean matching
     
     # load from disk
@@ -55,11 +55,37 @@ def get_xy(rec1, bin_size, rec2=None):
     df1 = rate_and_time(df1, bin_size)
     df2 = rate_and_time(df2, bin_size)
 
-    # convert to matrix
-    X = pd.pivot_table(df1, values='dfr', index='T', columns='unit').fillna(0).values
-    Y = pd.pivot_table(df2, values='dfr', index='T', columns='unit').fillna(0).values
+    return df1, df2
 
-    return X, Y
+def get_matrix(df):
+
+    # convert to matrix
+    df_mat = pd.pivot_table(df, values='dfr', index='T', columns='unit').fillna(0)
+
+    return df_mat
+
+def matrix2df(X, dfx):
+
+    t = dfx.loc[:, 'T'].values
+    bins = dfx.loc[:, 'bins'].values
+    trl = dfx.loc[:, 'trial'].values
+    t2bins = pd.Series(index=t, data=bins).to_dict()   
+    t2trl = pd.Series(index=t, data=trl).to_dict()   
+    
+    df_piv = pd.pivot_table(dfx, values='dfr', index='T', columns='unit').fillna(0)
+    df_piv.loc[:, :] = X
+    df_stack = df_piv.stack()
+    dfr = df_stack.values
+    t, unt  = [ *df_stack.index.to_frame().values.T ]
+    df = pd.DataFrame(data={
+        'unit': unt.astype(int),
+        'trial': [ t2trl[i] for i in t ],
+        'dfr': dfr,
+        'bins': [ t2bins[i] for i in t ],
+        'T': t,
+    })
+
+    return df
 
 
 def linear_regression(X, Y, cv=10):
@@ -306,7 +332,6 @@ def plot_unit(df_psth, rec, bin_size, unit, xlims=(None, None), path=''):
 
     fig, ax = plt.subplots(figsize=(20, 5))
 
-
     d = df_psth.groupby('unit').get_group(unit)
     x = d.loc[:, 'T'].values * bin_size
     y = d.loc[:, 'fr'].values
@@ -322,6 +347,46 @@ def plot_unit(df_psth, rec, bin_size, unit, xlims=(None, None), path=''):
     ax.set_xlabel('time [s]')
     ax.set_ylabel('firing rate [Hz]')
     ax.set_xlim(xlims)
+
+    fig.tight_layout()
+    if path:
+        fig.savefig(path)
+        plt.close(fig)
+
+
+def plot_psth(df, bin_size, df2=None, scores={}, path=''):
+
+    df.loc[:, 'type'] = 'true'
+    df.loc[:, 't'] = df.loc[:, 'bins'] * bin_size
+
+    if df2 is not None:
+        df2.loc[:, 'type'] = 'predicted'
+        df2.loc[:, 't'] = df2.loc[:, 'bins'] * bin_size
+        df = pd.concat([df, df2], ignore_index=True)
+
+    # TODO apply boxcar filter
+
+    nu = len(df.loc[:, 'unit'].unique())
+    nc = 5
+    nr = int(np.ceil(nu / nc))
+
+    fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(nu, 2*nr))
+
+    for ax, (u, d) in zip(axmat.flatten(), df.groupby('unit')):
+        sns.lineplot(ax=ax, data=d, x='t', y='dfr', hue='type', legend=False)
+
+        title = f'unit {u}'
+        if scores:
+            title += f' ({scores[u]:1.2f})'
+        ax.set_title(title)
+        ax.margins(x=0)
+        ax.set_xlabel('')
+        ax.set_ylabel('')
+
+    for ax in axmat[-1]:
+        ax.set_xlabel('time from cue [s]')
+    for ax in axmat.T[0]:
+        ax.set_ylabel('firing rate [Hz]')
 
     fig.tight_layout()
     if path:
