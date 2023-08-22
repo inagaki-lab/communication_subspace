@@ -157,18 +157,31 @@ def plot_rate_dist(X, Y, path=''):
         fig.savefig(path)
         plt.close(fig)
 
-def plot_gridsearch(mods, param, logscale=True):
+def plot_gridsearch(mods, param, other_mods=dict(), logscale=True):
 
     # plot ridge
     df = pd.DataFrame(mods.cv_results_)
-    ncv = len([c for c in pd.DataFrame(mods.cv_results_).columns if c.startswith('split')])
-    x, y, yerr = df.loc[:, param], df.loc[:, 'mean_test_score'], df.loc[:, 'std_test_score'] / np.sqrt(ncv)
+    ncv = len([c for c in df.columns if c.startswith('split')])
+    x = [ np.array(*i.values()).item() for i in df.loc[:, 'params'] ]
+    y, yerr = df.loc[:, 'mean_test_score'], df.loc[:, 'std_test_score'] / np.sqrt(ncv)
 
     fig, ax = plt.subplots()
     ax.errorbar(x, y, yerr, label=param)
     ax.axvline(x[y.argmax()], c='gray', ls=':')
-    ax.set_title(f'best score: {y.max():1.2f}')
+
+    for i, (name, mods) in enumerate(other_mods.items()):
+        df = pd.DataFrame(mods.cv_results_)
+        ncv = len([c for c in df.columns if c.startswith('split')])
+        i_max = df.loc[:, 'mean_test_score'].argmax()
+        ds = df.loc[i_max, :]
+        x = np.array(*ds.loc['params'].values()).item()
+        y, yerr = ds.loc['mean_test_score'], ds.loc['std_test_score'] / np.sqrt(ncv)
+        ax.axhline(y, lw=1, label=name, c=f'C{i+1}')
+        ax.axhline(y+yerr, ls=':', lw=1, label=name, c=f'C{i+1}')
+        ax.axhline(y-yerr, ls=':', lw=1, c=f'C{i+1}')
+
     ax.legend()
+    ax.set_title(f'best score: {y.max():1.2f}')
     ax.set_xlabel('parameter')
     ax.set_ylabel('score')
 
