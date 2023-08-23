@@ -88,19 +88,19 @@ def matrix2df(X, dfx):
     return df
 
 
-def linear_regression(X, Y, cv=10):
+# def linear_regression(X, Y, cv=10):
 
-    pipe = Pipeline(steps=[
-        # ('scaler', StandardScaler()),
-        ('mod', LinearRegression())
-    ])
+#     pipe = Pipeline(steps=[
+#         # ('scaler', StandardScaler()),
+#         ('mod', LinearRegression())
+#     ])
 
-    scores = cross_val_score(pipe, X, Y, cv=cv)
+#     scores = cross_val_score(pipe, X, Y, cv=cv)
 
-    return scores
+#     return scores
 
 
-def ridge_regression(X, Y, alphas):
+def ridge_regression(X, Y, alphas, scoring=None):
 
     pipe = Pipeline(steps=[
         # ('scaler', StandardScaler()),
@@ -110,15 +110,16 @@ def ridge_regression(X, Y, alphas):
     grd = GridSearchCV(
         pipe, 
         { 'mod__alpha': alphas, },
+        scoring=scoring,
         cv=10,
-        n_jobs=-1
+        n_jobs=-1,
     )
 
     mods = grd.fit(X, Y)
     return mods
 
 
-def reduced_rank_regression(X, Y, max_rank):
+def reduced_rank_regression(X, Y, max_rank, scoring=None):
 
     r = np.arange(max_rank) + 1
 
@@ -130,6 +131,7 @@ def reduced_rank_regression(X, Y, max_rank):
     grd = GridSearchCV(
         pipe, 
         { 'mod__r': r, },
+        scoring=scoring,
         cv=10,
         n_jobs=-1,
     )
@@ -177,7 +179,7 @@ def plot_gridsearch(mods, param, other_mods=dict(), logscale=True):
         x = np.array(*ds.loc['params'].values()).item()
         y, yerr = ds.loc['mean_test_score'], ds.loc['std_test_score'] / np.sqrt(ncv)
         ax.axhline(y, lw=1, label=name, c=f'C{i+1}')
-        ax.axhline(y+yerr, ls=':', lw=1, label=name, c=f'C{i+1}')
+        ax.axhline(y+yerr, ls=':', lw=1, c=f'C{i+1}')
         ax.axhline(y-yerr, ls=':', lw=1, c=f'C{i+1}')
 
     ax.legend()
@@ -386,7 +388,7 @@ def plot_psth(df, bin_size, df2=None, scores={}, path=''):
     fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(nu, 2*nr))
 
     for ax, (u, d) in zip(axmat.flatten(), df.groupby('unit')):
-        sns.lineplot(ax=ax, data=d, x='t', y='dfr', hue='type', legend=False)
+        sns.lineplot(ax=ax, data=d, x='t', y='dfr', hue='type', errorbar='sd', legend=False)
 
         title = f'unit {u}'
         if scores:
