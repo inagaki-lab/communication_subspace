@@ -1,12 +1,8 @@
 import pandas as pd
 import numpy as np
-from scipy.ndimage import  gaussian_filter1d
-
-from recording import Recording
 
 from sklearn.model_selection import GridSearchCV, cross_val_score
-from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 from custom_models import RRRegressor
 
@@ -14,15 +10,36 @@ import matplotlib.pylab as plt
 import seaborn as sns
 
 
-def select_data(rec1, bin_size, rec2=None):
+def preproc_rec(rec, params):
+    # summarize preprocessing in function
+
+    # bin spikes
+    bs = params['bin_size']
+    p_bin = rec._path_name(f'bin{bs}.parquet')
+    df = rec._assign_df(p_bin, rec._calculate_psth, {'bin_size': bs})
+
+    # more preprocessing
+    p_prec = rec._path_name(f'bin{bs}_prec.parquet')
+    rec.df_prec = rec._assign_df(p_prec, rate_and_time, {'df': df, 'bin_size': bs})
+
+    # filter units/trials
+    unts_rate = filter_rates(rec.df_prec, params['thresh_rate'])
+    unts_sw = filter_spike_width(rec.df_unt, params['thresh_sw'])
+
+    m = rec.df_unt.loc[:, 'unit'].isin(unts_rate & unts_sw)
+    unts_range, trls_range = filter_trials(rec.df_unt.loc[m], thresh=params['thresh_trials'], plot=False)
+
+    rec.units = unts_rate & unts_sw & unts_range
+    rec.trials = trls_range
+
+def select_data(rec1, rec2=None):
     # TODO implement mean matching
     
-    # load from disk
-    df1 = pd.read_parquet(rec1._path_name(f'bin{bin_size}.parquet'))
+    df1 = rec1.df_prec
     
     if rec2 is not None:
-        # load from disk
-        df2 = pd.read_parquet(rec2._path_name(f'bin{bin_size}.parquet'))
+        
+        df2 = rec2.df_prec
 
         # select trials common to both
         trials =  rec1.trials & rec2.trials
@@ -51,53 +68,36 @@ def select_data(rec1, bin_size, rec2=None):
         df2 = df1.loc[ df1.loc[:, 'unit'].isin(u2) ]
         df1 = df1.loc[ df1.loc[:, 'unit'].isin(u1) ]
 
-    # convert hist to firing rate, subtract pre=cue
-    df1 = rate_and_time(df1, bin_size)
-    df2 = rate_and_time(df2, bin_size)
-
     return df1, df2
 
-def get_matrix(df):
+def get_matrices(df1, df2):
 
-    # convert to matrix
-    df_mat = pd.pivot_table(df, values='dfr', index='T', columns='unit').fillna(0)
+    # convert to pivo
+    df_piv1 = pd.pivot_table(df1, values='dfr', index='T', columns='unit')
+    df_piv2 = pd.pivot_table(df2, values='dfr', index='T', columns='unit')
 
-    return df_mat
+    # get time points missing in other df
+    i1 = [ i for i in df_piv1.index if i not in df_piv2.index ]
+    i2 = [ i for i in df_piv2.index if i not in df_piv1.index ]
 
-def matrix2df(X, dfx):
+    # append dummy data
+    d1 = pd.DataFrame(index=i1, columns=df_piv2.columns)
+    d2 = pd.DataFrame(index=i2, columns=df_piv1.columns)
 
-    t = dfx.loc[:, 'T'].values
-    bins = dfx.loc[:, 'bins'].values
-    trl = dfx.loc[:, 'trial'].values
-    t2bins = pd.Series(index=t, data=bins).to_dict()   
-    t2trl = pd.Series(index=t, data=trl).to_dict()   
-    
-    df_piv = pd.pivot_table(dfx, values='dfr', index='T', columns='unit').fillna(0)
-    df_piv.loc[:, :] = X
-    df_stack = df_piv.stack()
-    dfr = df_stack.values
-    t, unt  = [ *df_stack.index.to_frame().values.T ]
-    df = pd.DataFrame(data={
-        'unit': unt.astype(int),
-        'trial': [ t2trl[i] for i in t ],
-        'dfr': dfr,
-        'bins': [ t2bins[i] for i in t ],
-        'T': t,
-    })
+    # long to wide
+    df_piv1 = pd.concat([df_piv1, d2]).sort_index()
+    df_piv2 = pd.concat([df_piv2, d1]).sort_index()
 
-    return df
+    # check if time points match, define time basis
+    if not np.all(df_piv1.index == df_piv2.index):
+        raise ValueError('Mismatching time points in df_piv1 and df_piv2')
+    basis_time = df_piv1.index
 
+    # convert to array
+    mat1 = df_piv1.fillna(0).values
+    mat2 = df_piv2.fillna(0).values
 
-# def linear_regression(X, Y, cv=10):
-
-#     pipe = Pipeline(steps=[
-#         # ('scaler', StandardScaler()),
-#         ('mod', LinearRegression())
-#     ])
-
-#     scores = cross_val_score(pipe, X, Y, cv=cv)
-
-#     return scores
+    return mat1, mat2, basis_time
 
 
 def ridge_regression(X, Y, alphas, scoring=None):
@@ -159,7 +159,7 @@ def plot_rate_dist(X, Y, path=''):
         fig.savefig(path)
         plt.close(fig)
 
-def plot_gridsearch(mods, param, other_mods=dict(), logscale=True):
+def plot_gridsearch(mods, param, other_mods=dict(), logscale=True, path=''):
 
     # plot ridge
     df = pd.DataFrame(mods.cv_results_)
@@ -190,19 +190,17 @@ def plot_gridsearch(mods, param, other_mods=dict(), logscale=True):
     if logscale:
         ax.set_xscale('log')
 
-# def smooth_psth(df, sigma, bin_size):
-#     'filter size in [s]'
+    fig.tight_layout()
+    if path:
+        fig.savefig(path)
+        plt.close(fig)
 
-#     for _, d in df.groupby('unit'):
+def save_cv_results(mods, path):
+    
+    df = pd.DataFrame(mods.cv_results_)
+    
+    df.to_parquet(path)
 
-#         y = d.loc[:, 'hist'].values
-#         y = y.astype(float)
-        
-#         y = gaussian_filter1d(y, sigma=sigma / bin_size) / bin_size
-
-#         df.loc[d.index, 'fr'] = y
-
-#     return df
 
 def rate_and_time(df, bin_size):
     
@@ -212,16 +210,23 @@ def rate_and_time(df, bin_size):
     df.loc[:, 'fr'] = y
 
     # subtract mean firing rate before cue (bins < 0)
-    for _, d in df.groupby(['unit', 'trial']):
+    dss = []
+    for _, d in df.groupby(['unit', 'trial'], sort=False):
         
         m = d.loc[:, 'bins'] < 0 # mask for bins < 0
         fr = d.loc[:, 'fr'] # firing rate
         fr_m = fr.loc[ m ].mean() # mean firing rate for bins < 0
-        df.loc[d.index, 'dfr'] = fr - fr_m # pre-cue subtracted firing rate
+        dfr = fr - fr_m # pre-cue subtracted firing rate
+        
+        ds = pd.Series(index=d.index, data=dfr.values)
+        dss.append(ds)
+
+    ds = pd.concat(dss)
+    df.loc[ds.index, 'dfr'] = ds.values
 
     # add absolute time 
     T = 0
-    for _, d in df.groupby('trial'):
+    for _, d in df.groupby('trial', sort=False):
         n = len(d.loc[:, 'bins'].unique())
         df.loc[d.index, 'T'] = d.loc[:, 'bins'] + T
         T += n
@@ -342,12 +347,12 @@ def plot_missing(df_psth, bin_size, vmax=None, path=''):
         fig.savefig(path)
         plt.close(fig)
 
-def plot_unit(df_psth, rec, bin_size, unit, xlims=(None, None), path=''):
+def plot_unit(rec, bin_size, unit, xlims=(None, None), path=''):
 
 
     fig, ax = plt.subplots(figsize=(20, 5))
 
-    d = df_psth.groupby('unit').get_group(unit)
+    d = rec.df_prec.groupby('unit').get_group(unit)
     x = d.loc[:, 'T'].values * bin_size
     y = d.loc[:, 'fr'].values
 
@@ -369,30 +374,66 @@ def plot_unit(df_psth, rec, bin_size, unit, xlims=(None, None), path=''):
         plt.close(fig)
 
 
-def plot_psth(df, bin_size, df2=None, scores={}, path=''):
+def get_ypred(X, Y, dfx, dfy, basis_time, mod, scoring=None):
+
+    # get prediction
+    Y_pred = mod.predict(X)
+
+    # get scores per unit
+    scores = [ cross_val_score(mod, X, Y[:, i], cv=10, scoring=scoring).mean() for i in range(Y.shape[1]) ]
+
+    # get basis in bins
+    t2binx = pd.Series(dfx.loc[:, 'bins'].values, index=dfx.loc[:, 'T']).to_dict()
+    t2biny = pd.Series(dfy.loc[:, 'bins'].values, index=dfy.loc[:, 'T']).to_dict()
+    t2bin = t2binx | t2biny
+
+    # add t2trl mappint here
+
+    # score mapping
+    units = dfy.loc[:, 'unit'].unique()
+    unt2score = { k: v for k, v in zip(units, scores)}
+
+    # convert back to long format
+    df_piv = pd.DataFrame(data=Y_pred, index=basis_time, columns=units)
+    df_stack = df_piv.stack()
+    v = df_stack.values
+    t, u = [ *df_stack.index.to_frame().values.T ]
+
+    dfy_pred = pd.DataFrame(data={
+        'unit': u.astype(int),
+        # 'trial': [ t2trl[i] for i in t ],
+        'pred': v,
+        'bins': [ t2bin[i] for i in t ],
+        'T': t,
+    })
+
+
+    return dfy_pred, unt2score
+
+def plot_mean_response(df, bin_size, df_pred=None, scores={}, quantity='dfr', path=''):
 
     df.loc[:, 'type'] = 'true'
-    df.loc[:, 't'] = df.loc[:, 'bins'] * bin_size
+    df = df.rename(columns={quantity: 'y'})
+    df.loc[:, 'x'] = df.loc[:, 'bins'] * bin_size
 
-    if df2 is not None:
-        df2.loc[:, 'type'] = 'predicted'
-        df2.loc[:, 't'] = df2.loc[:, 'bins'] * bin_size
-        df = pd.concat([df, df2], ignore_index=True)
-
-    # TODO apply boxcar filter
+    if df_pred is not None:
+        df_pred.loc[:, 'type'] = 'predicted'
+        df_pred = df_pred.rename(columns={'pred' : 'y'})
+        df_pred.loc[:, 'x'] = df_pred.loc[:, 'bins'] * bin_size
+        df = pd.concat([df, df_pred], ignore_index=True)
 
     nu = len(df.loc[:, 'unit'].unique())
     nc = 5
     nr = int(np.ceil(nu / nc))
 
-    fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(nu, 2*nr))
+    fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(3*nc, 2*nr), squeeze=False)
 
     for ax, (u, d) in zip(axmat.flatten(), df.groupby('unit')):
-        sns.lineplot(ax=ax, data=d, x='t', y='dfr', hue='type', errorbar='sd', legend=False)
+        sns.lineplot(ax=ax, data=d, x='x', y='y', hue='type', errorbar='sd', legend=False)
 
         title = f'unit {u}'
         if scores:
-            title += f' ({scores[u]:1.2f})'
+            title += f' ({scores[u]:1.3f})'
         ax.set_title(title)
         ax.margins(x=0)
         ax.set_xlabel('')
@@ -402,6 +443,10 @@ def plot_psth(df, bin_size, df2=None, scores={}, path=''):
         ax.set_xlabel('time from cue [s]')
     for ax in axmat.T[0]:
         ax.set_ylabel('firing rate [Hz]')
+
+    for ax in axmat.flatten():
+        if not ax.has_data():
+            ax.set_axis_off()
 
     fig.tight_layout()
     if path:
