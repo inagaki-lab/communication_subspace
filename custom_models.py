@@ -28,8 +28,8 @@ class RRRegressor(BaseEstimator, RegressorMixin):
 
         # PCA (alternatives: sklearn.decomposition.PCA or np.linalg.svd)
 
-        C = np.cov(X, rowvar=False)        # covariance matrix
-        val, vec = np.linalg.eig(C.T)         # diagonalize
+        C = np.cov(X, rowvar=False)           # covariance matrix
+        val, vec = np.linalg.eigh(C.T)         # diagonalize
         V = vec[:, np.argsort(val)[::-1]]     # ensure descending components
 
         # from sklearn.decomposition import PCA
