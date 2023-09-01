@@ -13,7 +13,7 @@ plt.rcParams['savefig.facecolor'] = 'w'
 
 class Recording:
 
-    def __init__(self, matlab_file, bin_size=1e-3, force_overwrite=False):
+    def __init__(self, matlab_file, bin_size=1e-3, calc_psth=False, force_overwrite=False):
 
         self.path_mat = Path(matlab_file)
         self.session = self.path_mat.with_suffix('').name
@@ -35,8 +35,9 @@ class Recording:
         self.path_spk = self._path_name('spk.parquet')
         self.df_spk = self._assign_df(self.path_spk, self._load_spike_times)
 
-        self.path_psth = self._path_name('psth.parquet')
-        self.df_psth = self._assign_df(self.path_psth, self._calculate_psth)
+        if calc_psth:
+            self.path_psth = self._path_name('psth.parquet')
+            self.df_psth = self._assign_df(self.path_psth, self._calculate_psth)
 
 
     def _assign_df(self, path, function, kw=dict()):
@@ -380,15 +381,16 @@ class Recording:
 
         if unts is None:
             unts = self.df_unt.loc[:, 'unit'].unique()
-        n = len(unts)
+        nu = len(unts)
+        nc = 5
+        nr = int(np.ceil(nu / nc))
 
-        fig, axmat = plt.subplots(nrows=n, figsize=(10, 3*n), squeeze=False)
+        fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(3*nc, 2*nr), squeeze=False)
         fig.suptitle('PSTH | moving average {} ms | {}'.format(filter_size, self.session), y=1.0)
         gr_psth = self.df_psth.groupby('unit')
         gr_unt = self.df_unt.groupby('unit')
 
-        axarr = axmat[0]
-        for unt, ax in zip(unts, axarr):
+        for unt, ax in zip(unts, axmat.flatten()):
 
             trl_i = gr_unt.get_group(unt).loc[:, 'first_trial'].item()
             trl_f = gr_unt.get_group(unt).loc[:, 'last_trial'].item()
@@ -397,8 +399,7 @@ class Recording:
             df = gr_psth.get_group(unt)
             df = df.loc[ df.loc[:, 'trial'].isin(trls) ]
 
-
-            ds = df.groupby('bins').mean().loc[:, 'hist'].sort_index()
+            ds = df.groupby('bins').mean(numeric_only=True).loc[:, 'hist'].sort_index()
 
             x, y = ds.index, ds.values
             x = x * self.bin_size
@@ -408,17 +409,25 @@ class Recording:
                 mask = ( (x > xlims[0]) & (x < xlims[1]) )
                 x, y = x[mask], y[mask]
             ax.plot(x, y)
-            ax.set_xlim(xlims)
+            # ax.set_xlim(xlims)
 
             ax.axvline(0, color='gray', lw=1, ls='--')
             ax.axhline(0, color='gray', lw=1)
 
-            ax.set_title('unit {} | trial range = [{}, {}]'.format(unt, trl_i, trl_f))
-            ax.set_xlabel('time from [s]')
-            ax.set_ylabel('rate [Hz]')
+            ax.set_title('unit {} | trials = [{}, {}]'.format(unt, trl_i, trl_f))
+            ax.margins(x=0)
+            ax.set_xlabel('')
+            ax.set_ylabel('')
+
+        for ax in axmat[-1]:
+            ax.set_xlabel('time from cue [s]')
+        for ax in axmat.T[0]:
+            ax.set_ylabel('firing rate [Hz]')
+        for ax in axmat.flatten()[len(unts):]:
+            ax.axis('off')
+
 
         fig.tight_layout()
-
         if path:
             fig.savefig(path)
             plt.close(fig)
