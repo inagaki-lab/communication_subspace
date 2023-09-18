@@ -17,24 +17,28 @@ class Recording:
 
         self.path_mat = Path(matlab_file)
         self.session = self.path_mat.with_suffix('').name
-
-        self._matlab = None
+        
+        # systematic naming of datafiles based on matlab file
         self._path_name = lambda x : self.path_mat.parent / '{}_{}'.format(self.path_mat.with_suffix('').name, x)
 
         self.force_overwrite = force_overwrite
         self.bin_size = bin_size
 
+        # load trial info
         self.path_trl = self._path_name('trl.parquet')
         self.df_trl = self._assign_df(self.path_trl, self._load_trial_info)
         self.trials = { *self.df_trl.loc[:, 'trial'] }
 
+        # load unit info
         self.path_unt = self._path_name('unt.parquet')
         self.df_unt = self._assign_df(self.path_unt, self._load_unit_info)
         self.units = { *self.df_unt.loc[:, 'unit'] }
 
+        # load spike times
         self.path_spk = self._path_name('spk.parquet')
         self.df_spk = self._assign_df(self.path_spk, self._load_spike_times)
 
+        # calculate PSTH (optional)
         if calc_psth:
             self.path_psth = self._path_name('psth.parquet')
             self.df_psth = self._assign_df(self.path_psth, self._calculate_psth)
@@ -53,7 +57,10 @@ class Recording:
 
     def _load_matlab(self):
 
-        if not self._matlab:
+        
+        try: # check if matlab file has been loaded
+            self._matlab
+        except AttributeError: # if not, load
             self._matlab = loadmat(self.path_mat, squeeze_me=True, struct_as_record=False)
 
         return self._matlab
@@ -179,6 +186,7 @@ class Recording:
         
         m = self._load_matlab()
         
+        # combine SpikeTimes and Trial_idx_of_spike in one data frame
         l = []
         for i, u in enumerate(m['unit']):
             t = vars(u)['SpikeTimes']
@@ -194,28 +202,31 @@ class Recording:
 
         df = pd.concat(l, ignore_index=True)
 
+        # align spike times to precue and filter based on dt0 and dtf (see _load_trial_info)
         gr = df.groupby('trial')
-
-
         l = []
         for i in self.df_trl.index:
 
+            # Note: if either dt_pre, dt0 or dtf is nan
+            # all spikes will be disregarded
+            # this ignores e.g. early lick or no cue trials
             trl, dt_pre, dt0, dtf = self.df_trl.loc[ i, ['trial', 'dt_pre', 'dt0', 'dtf'] ]
             
+            # unaligned spike times
             d = gr.get_group(trl).copy()
             t = d.loc[:, 't']
 
             # spike times: aligned to PreSample
             t += dt_pre # now everything is aligned to cue
 
-            # filter spike times
+            # filter spike times based on dt0 and dtf
             d = d.loc[ (t > dt0) & (t < dtf )]
 
             l.append(d)
         
         df = pd.concat(l, ignore_index=True)
     
-        # filter trials per unit according to defined trial ranges
+        # filter trials per unit according to defined trial ranges defined in df_trl
         gr_unt = self.df_unt.groupby('unit')
         l = []
         for unt, d in df.groupby('unit'):
