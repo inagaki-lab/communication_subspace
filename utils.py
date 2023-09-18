@@ -70,11 +70,11 @@ def select_data(rec1, rec2=None):
 
     return df1, df2
 
-def get_matrices(df1, df2):
+def get_matrices(df1, df2, signal):
 
     # convert to pivo
-    df_piv1 = pd.pivot_table(df1, values='dfr', index='T', columns='unit')
-    df_piv2 = pd.pivot_table(df2, values='dfr', index='T', columns='unit')
+    df_piv1 = pd.pivot_table(df1, values=signal, index='T', columns='unit')
+    df_piv2 = pd.pivot_table(df2, values=signal, index='T', columns='unit')
 
     # get time points missing in other df
     i1 = [ i for i in df_piv1.index if i not in df_piv2.index ]
@@ -410,10 +410,10 @@ def get_ypred(X, Y, dfx, dfy, basis_time, mod, scoring=None):
 
     return dfy_pred, unt2score
 
-def plot_mean_response(df, bin_size, df_pred=None, scores={}, quantity='dfr', path=''):
+def plot_mean_response(df, bin_size, signal, df_pred=None, scores={}, path=''):
 
     df.loc[:, 'type'] = 'true'
-    df = df.rename(columns={quantity: 'y'})
+    df = df.rename(columns={signal: 'y'})
     df.loc[:, 'x'] = df.loc[:, 'bins'] * bin_size
 
     if df_pred is not None:
