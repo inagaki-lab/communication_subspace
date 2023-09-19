@@ -40,7 +40,7 @@ class Recording:
 
         # calculate PSTH (optional)
         if calc_psth:
-            self.path_psth = self._path_name('psth.parquet')
+            self.path_psth = self._path_name(f'bin{self.bin_size}.parquet')
             self.df_psth = self._assign_df(self.path_psth, self._calculate_psth)
 
 
