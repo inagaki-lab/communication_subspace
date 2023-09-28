@@ -285,22 +285,22 @@ def filter_trials(df_unt, thresh=0.9, plot=False):
     return unts, trls
 
 
-def filter_rates(df_psth, thresh, plot=False):
+def filter_rates(df_prec, thresh, plot=False):
 
-    d = pd.pivot_table(data=df_psth, values='fr', index='unit', columns='T')
-    d = d.fillna(0).mean(axis=1)
+    nt = len(df_prec.loc[:, 'T'].unique())
+    df = df_prec.loc[:, ['unit', 'fr']].groupby('unit').sum() / nt
 
     if plot:
         fig, ax = plt.subplots()
 
-        sns.histplot(data=d.values, ax=ax, cumulative=True, binwidth=0.5, element='step', fill=False)
+        sns.histplot(data=df.loc[:, 'fr'].values, ax=ax, cumulative=True, binwidth=0.5, element='step', fill=False)
         ax.axvline(thresh, ls=':', c='gray')
         ax.set_xlabel('rate [Hz]')
 
         fig.tight_layout()
 
-    d = d.loc[d > thresh]
-    unts = { *d.index }
+    df = df.loc[df.loc[:, 'fr'] > thresh]
+    unts = { *df.index }
 
     return unts
 
