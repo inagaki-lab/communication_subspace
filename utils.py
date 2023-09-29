@@ -13,18 +13,9 @@ import seaborn as sns
 def preproc_rec(rec, params):
     # summarize preprocessing in function
 
-    # bin spikes
-    bs = params['bin_size']
-    p_bin = rec._path_name(f'bin{bs}.parquet')
-    df = rec._assign_df(p_bin, rec._calculate_psth, {'bin_size': bs})
-
-    # more preprocessing
-    p_prec = rec._path_name(f'bin{bs}_prec.parquet')
-    rec.df_prec = rec._assign_df(p_prec, rate_and_time, {'df': df, 'bin_size': bs})
-
     # filter units/trials
-    unts_rate = filter_rates(rec.df_prec, params['thresh_rate'])
-    unts_sw = filter_spike_width(rec.df_unt, params['thresh_sw'])
+    unts_rate = filter_rate(rec.df_spk, rec.df_unt, rec.df_trl, params['thresh_rate'])
+    unts_sw = filter_sw(rec.df_unt, params['thresh_sw'])
 
     m = rec.df_unt.loc[:, 'unit'].isin(unts_rate & unts_sw)
     unts_range, trls_range = filter_trials(rec.df_unt.loc[m], thresh=params['thresh_trials'], plot=False)
@@ -72,25 +63,41 @@ def select_data(rec1, rec2=None):
 
 def get_matrices(df1, df2, signal):
 
+    s1 = { *df1.loc[:, 'trial'].unique()}
+    s2 = { *df2.loc[:, 'trial'].unique()}
+    if s1 != s2:
+        raise ValueError('Cant determine time basis')
+
+    t = 0
+    for _, df in df1.groupby(['trial', 'bins']):
+        df1.loc[df.index, 'T'] = t
+        t += 1
+
+    t = 0
+    for _, df in df2.groupby(['trial', 'bins']):
+        df2.loc[df.index, 'T'] = t
+        t += 1
+
+
     # convert to pivo
     df_piv1 = pd.pivot_table(df1, values=signal, index='T', columns='unit')
     df_piv2 = pd.pivot_table(df2, values=signal, index='T', columns='unit')
 
-    # get time points missing in other df
-    i1 = [ i for i in df_piv1.index if i not in df_piv2.index ]
-    i2 = [ i for i in df_piv2.index if i not in df_piv1.index ]
+    # # get time points missing in other df
+    # i1 = [ i for i in df_piv1.index if i not in df_piv2.index ]
+    # i2 = [ i for i in df_piv2.index if i not in df_piv1.index ]
 
-    # append dummy data
-    d1 = pd.DataFrame(index=i1, columns=df_piv2.columns)
-    d2 = pd.DataFrame(index=i2, columns=df_piv1.columns)
+    # # append dummy data
+    # d1 = pd.DataFrame(index=i1, columns=df_piv2.columns)
+    # d2 = pd.DataFrame(index=i2, columns=df_piv1.columns)
 
-    # long to wide
-    df_piv1 = pd.concat([df_piv1, d2]).sort_index()
-    df_piv2 = pd.concat([df_piv2, d1]).sort_index()
+    # # long to wide
+    # df_piv1 = pd.concat([df_piv1, d2]).sort_index()
+    # df_piv2 = pd.concat([df_piv2, d1]).sort_index()
 
-    # check if time points match, define time basis
-    if not np.all(df_piv1.index == df_piv2.index):
-        raise ValueError('Mismatching time points in df_piv1 and df_piv2')
+    # # check if time points match, define time basis
+    # if not np.all(df_piv1.index == df_piv2.index):
+    #     raise ValueError('Mismatching time points in df_piv1 and df_piv2')
     basis_time = df_piv1.index
 
     # convert to array
@@ -202,7 +209,7 @@ def save_cv_results(mods, path):
     df.to_parquet(path)
 
 
-def rate_and_time(df, bin_size):
+def hist2rate(df, bin_size):
     
     # convert hist to firing rate
     y = df.loc[:, 'hist'].values.astype(float)
@@ -224,14 +231,15 @@ def rate_and_time(df, bin_size):
     ds = pd.concat(dss)
     df.loc[ds.index, 'dfr'] = ds.values
 
-    # add absolute time 
-    T = 0
-    for _, d in df.groupby('trial', sort=False):
-        n = len(d.loc[:, 'bins'].unique())
-        df.loc[d.index, 'T'] = d.loc[:, 'bins'] + T
-        T += n
+    # # add absolute time 
+    # T = 0
+    # for _, d in df.groupby('trial', sort=True):
+
+    #     n = len(d.loc[:, 'bins'].unique())
+    #     df.loc[d.index, 'T'] = d.loc[:, 'bins'] + T
+    #     T += n
     
-    df.loc[:, 'T'] -= df.loc[:, 'T'].min()
+    # df.loc[:, 'T'] -= df.loc[:, 'T'].min()
     
     return df
 
@@ -285,29 +293,36 @@ def filter_trials(df_unt, thresh=0.9, plot=False):
     return unts, trls
 
 
-def filter_rates(df_prec, thresh, plot=False):
+def filter_sw(df_unt, thresh):
 
-    nt = len(df_prec.loc[:, 'T'].unique())
-    df = df_prec.loc[:, ['unit', 'fr']].groupby('unit').sum() / nt
-
-    if plot:
-        fig, ax = plt.subplots()
-
-        sns.histplot(data=df.loc[:, 'fr'].values, ax=ax, cumulative=True, binwidth=0.5, element='step', fill=False)
-        ax.axvline(thresh, ls=':', c='gray')
-        ax.set_xlabel('rate [Hz]')
-
-        fig.tight_layout()
-
-    df = df.loc[df.loc[:, 'fr'] > thresh]
-    unts = { *df.index }
+    # filter based on spike width
+    m = df_unt.loc[:, 'spike_width'] > thresh
+    unts = set(df_unt.loc[ m, 'unit'])
 
     return unts
 
-def filter_spike_width(df_unt, thresh):
+def filter_rate(df_spk, df_unt, df_trl, thresh):
 
-    m = df_unt.loc[:, 'spike_width'] > thresh
-    unts = set(df_unt.loc[ m, 'unit'])
+    # get mapping from trial to duration
+    df = df_trl.loc[:, ['trial', 'dt0', 'dtf']].copy()
+    df.loc[:, 'dur'] = df.loc[:, 'dtf'] - df.loc[:, 'dt0']
+    ds = df.set_index('trial').loc[:, 'dur']
+
+    # get duration for each unit
+    d = dict()
+    for u, f, l in df_unt.loc[:, ['unit', 'first_trial', 'last_trial']].itertuples(index=False):
+        dur = np.nansum([ ds.loc[i] for i in range(f, l+1) ])
+        d[u] = dur
+
+    # number of spikes per unit
+    df = df_spk.groupby('unit', as_index=False).size()
+
+    # average firing rate
+    df.loc[:, 'rate'] = df.loc[:, 'size'] / df.loc[:, 'unit'].map(d)
+
+    # select units based on rate threshold 
+    m = df.loc[:, 'rate'] > thresh
+    unts = { *df.loc[m, 'unit'] }  
 
     return unts
 
