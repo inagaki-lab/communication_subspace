@@ -133,27 +133,37 @@ def select_data(rec1, params, rec2=None):
 
     return df1_bin, df2_bin
 
-def subtract_baseline(df_bin):
+def subtract_baseline(df_bin, df_spk, interval=(-2, 0)):
 
-    # mean firing rate pre cue
-    df = df_bin.reset_index() # multiindex to columns
-    m = df.loc[:, 'bin'] < 0 # all bins pre cue
-    df = df.loc[ m ].drop(columns='bin')
-    df_mean = df.groupby('trial').mean() # mean across
+    # select only spikes within `interval`
+    t0, tf = interval
+    t = df_spk.loc[:, 't']
+    m = (t < tf) & ( t > t0 )
+    df = df_spk.loc[m]
 
-    # convert `bin` index to column: same basis as `df_mean`
-    df_bin_ = df_bin.reset_index(level=1)
+    # number of spikes per unit per trial
+    df_n = df.groupby(['unit', 'trial']).size()
+    
+    # convert to rate
+    dt = tf - t0
+    df_r = df_n / dt
 
-    # baseline subtraction
-    df_bin_ -= df_mean
-    # drop `bin` column again
-    df_bin_ = df_bin_.drop(columns='bin')
+    # convert to pivot table
+    df_r = df_r.reset_index()
+    df_r = pd.pivot_table(data=df_r, index='trial', columns='unit', values=0)
+    # nan implies 0 Hz 
+    df_r = df_r.fillna(0)
 
-    # assign values back to df with multiindex
-    df_bin = df_bin.copy()
-    df_bin.loc[:, :] = df_bin_.values
+    # match structure with `df_bin`
+    idx = np.unique(df_bin.index.get_level_values(0))
+    cols = df_bin.columns
+    df_r = df_r.loc[ idx, cols]
 
-    return df_bin
+    # subtract
+    df_bin0 = df_bin.subtract(df_r)
+
+    return df_bin0
+
 
 def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None):
     
