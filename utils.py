@@ -164,6 +164,37 @@ def subtract_baseline(df_bin, df_spk, interval=(-2, 0)):
 
     return df_bin0
 
+def select_epoch(df_bin, epoch, df_trl=None):
+
+    t0, tf, align = epoch
+
+    if align == 'cue':
+        # bins are already aligned to cue
+        df_epo = df_bin.loc[ (slice(None), slice(t0, tf)), :]
+
+    elif align == 'lick':
+
+        # check if df_trl has been passed
+        assert df_trl is not None, f'Need df_trl when aligning to {align}'
+        
+        # map trial to lick time ('dt_lck' is aligned to cue)
+        trl2lck = { k: v for k, v in df_trl.loc[:, ['trial', 'dt_lck']].itertuples(index=False)}
+
+        # cycle trhough trials in df_bin
+        dfs = [] # collect relevant dataframes here
+        for trl in np.unique(df_bin.index.get_level_values(0)):
+            t_lck = trl2lck[trl]
+            t0, tf = t0 + t_lck, tf + t_lck
+            df = df_bin.loc[ ([trl], slice(t0, tf)), : ]
+            dfs.append(df)
+
+        # combine snippets again
+        df_epo = pd.concat(dfs)
+
+    else:
+        raise NotImplementedError(f'Do not know how to align to {align}')
+
+    return df_epo
 
 def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None):
     
