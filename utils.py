@@ -10,8 +10,7 @@ import matplotlib.pylab as plt
 import seaborn as sns
 
 
-def preproc_rec(rec, params):
-    # summarize preprocessing in function
+def filter_data(rec, params):
 
     # filter units/trials
     unts_rate = filter_rate(rec.df_spk, rec.df_unt, rec.df_trl, params['thresh_rate'])
@@ -23,14 +22,70 @@ def preproc_rec(rec, params):
     rec.units = unts_rate & unts_sw & unts_range
     rec.trials = trls_range
 
-def select_data(rec1, rec2=None):
-    # TODO implement mean matching
+
+def bin_spikes(df_spk, df_trl, bin_size):
+
+    # get dict with bin sized per trial
+    trl2bin = dict()
+    for trl, t0, tf in df_trl.loc[:, ['trial', 'dt0', 'dtf']].itertuples(index=False):
+        tf = tf - tf % bin_size # clip last bin
+        if tf != tf: # skip trials with nan as end
+            continue
+
+        # construct bins
+        b = np.arange(t0, tf + bin_size, bin_size)    
+        trl2bin[trl] = b
+
+    # define basis for array
+    unts = df_spk.loc[:, 'unit'].unique()
+    i_trl = np.concatenate([ (len(v)-1) * [ k ] for k, v in trl2bin.items() ])
+    i_bin = np.concatenate([ v[:-1] for k, v in trl2bin.items() ])
+
+    # initialize array
+    X = np.empty((len(i_trl), len(unts)))
+    X[:] = np.nan
+
+    # fill array
+    for trl, df in df_spk.groupby('trial'):
+
+        # get bins
+        bins = trl2bin[trl]
+        
+        # apply bin to each unit
+        gr = df.groupby('unit')
+        df = gr.apply(lambda x: np.histogram(x.loc[:, 't'], bins)[0]).apply(pd.Series)
+        df /= bin_size # spikes per bin -> spikes per s
+
+        # select correct indices for array
+        s0 = i_trl == trl
+        s1 = np.isin(unts, df.index)
+        idx = np.ix_(s0, s1)
+
+        # assign values to array
+        X[ idx ] = df.values.T
+
+    # convert to dataframe with multiindex
+    df = pd.DataFrame(
+        data=X, 
+        index=pd.MultiIndex.from_arrays([i_trl, i_bin], names=('trial', 'bin')), 
+        columns=unts)
     
-    df1 = rec1.df_prec
+    return df    
+
+
+
+def select_data(rec1, params, rec2=None):
+    # TODO implement mean matching
+
+    filter_data(rec1, params)
+    
+    df1 = rec1.df_spk.copy()
     
     if rec2 is not None:
         
-        df2 = rec2.df_prec
+        filter_data(rec2, params)
+
+        df2 = rec2.df_spk.copy()
 
         # select trials common to both
         trials =  rec1.trials & rec2.trials
@@ -40,6 +95,10 @@ def select_data(rec1, rec2=None):
         # select units
         df1 = df1.loc[ df1.loc[:, 'unit'].isin(rec1.units) ]
         df2 = df2.loc[ df2.loc[:, 'unit'].isin(rec2.units) ]
+
+        # bin spikes
+        df1_bin = bin_spikes(df1, rec1.df_trl, params['bin_size'])
+        df2_bin = bin_spikes(df2, rec2.df_trl, params['bin_size'])
 
     else: 
         # select trials
@@ -59,55 +118,46 @@ def select_data(rec1, rec2=None):
         df2 = df1.loc[ df1.loc[:, 'unit'].isin(u2) ]
         df1 = df1.loc[ df1.loc[:, 'unit'].isin(u1) ]
 
-    return df1, df2
+        # bin spikes
+        df1_bin = bin_spikes(df1, rec1.df_trl, params['bin_size'])
+        df2_bin = bin_spikes(df2, rec1.df_trl, params['bin_size'])
 
-def get_matrices(df1, df2, signal):
+    # discard rows with only nan in both dfx_bin and dfy_bin
+    m = df1_bin.isnull().all(axis=1) & df2_bin.isnull().all(axis=1)
+    df1_bin = df1_bin.loc[ ~m ]
+    df2_bin = df2_bin.loc[ ~m ]
 
-    s1 = { *df1.loc[:, 'trial'].unique()}
-    s2 = { *df2.loc[:, 'trial'].unique()}
-    if s1 != s2:
-        raise ValueError('Cant determine time basis')
+    # fill all remaining nan with 0
+    df1_bin = df1_bin.fillna(0)
+    df2_bin = df2_bin.fillna(0)
 
-    t = 0
-    for _, df in df1.groupby(['trial', 'bins']):
-        df1.loc[df.index, 'T'] = t
-        t += 1
+    return df1_bin, df2_bin
 
-    t = 0
-    for _, df in df2.groupby(['trial', 'bins']):
-        df2.loc[df.index, 'T'] = t
-        t += 1
+def subtract_baseline(df_bin):
 
+    # mean firing rate pre cue
+    df = df_bin.reset_index() # multiindex to columns
+    m = df.loc[:, 'bin'] < 0 # all bins pre cue
+    df = df.loc[ m ].drop(columns='bin')
+    df_mean = df.groupby('trial').mean() # mean across
 
-    # convert to pivo
-    df_piv1 = pd.pivot_table(df1, values=signal, index='T', columns='unit')
-    df_piv2 = pd.pivot_table(df2, values=signal, index='T', columns='unit')
+    # convert `bin` index to column: same basis as `df_mean`
+    df_bin_ = df_bin.reset_index(level=1)
 
-    # # get time points missing in other df
-    # i1 = [ i for i in df_piv1.index if i not in df_piv2.index ]
-    # i2 = [ i for i in df_piv2.index if i not in df_piv1.index ]
+    # baseline subtraction
+    df_bin_ -= df_mean
+    # drop `bin` column again
+    df_bin_ = df_bin_.drop(columns='bin')
 
-    # # append dummy data
-    # d1 = pd.DataFrame(index=i1, columns=df_piv2.columns)
-    # d2 = pd.DataFrame(index=i2, columns=df_piv1.columns)
+    # assign values back to df with multiindex
+    df_bin = df_bin.copy()
+    df_bin.loc[:, :] = df_bin_.values
 
-    # # long to wide
-    # df_piv1 = pd.concat([df_piv1, d2]).sort_index()
-    # df_piv2 = pd.concat([df_piv2, d1]).sort_index()
+    return df_bin
 
-    # # check if time points match, define time basis
-    # if not np.all(df_piv1.index == df_piv2.index):
-    #     raise ValueError('Mismatching time points in df_piv1 and df_piv2')
-    basis_time = df_piv1.index
-
-    # convert to array
-    mat1 = df_piv1.fillna(0).values
-    mat2 = df_piv2.fillna(0).values
-
-    return mat1, mat2, basis_time
-
-
-def ridge_regression(X, Y, alphas, scoring=None):
+def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None):
+    
+    X, Y = dfx_bin.values, dfy_bin.values
 
     pipe = Pipeline(steps=[
         # ('scaler', StandardScaler()),
@@ -123,11 +173,16 @@ def ridge_regression(X, Y, alphas, scoring=None):
     )
 
     mods = grd.fit(X, Y)
+
     return mods
 
 
-def reduced_rank_regression(X, Y, max_rank, scoring=None):
+def reduced_rank_regression(dfx_bin, dfy_bin, max_rank=None, scoring=None):
 
+    X, Y = dfx_bin.values, dfy_bin.values
+
+    if max_rank is None:
+        max_rank = Y.shape[1]
     r = np.arange(max_rank) + 1
 
     pipe = Pipeline(steps=[
@@ -208,40 +263,6 @@ def save_cv_results(mods, path):
     
     df.to_parquet(path)
 
-
-def hist2rate(df, bin_size):
-    
-    # convert hist to firing rate
-    y = df.loc[:, 'hist'].values.astype(float)
-    y = y / bin_size
-    df.loc[:, 'fr'] = y
-
-    # subtract mean firing rate before cue (bins < 0)
-    dss = []
-    for _, d in df.groupby(['unit', 'trial'], sort=False):
-        
-        m = d.loc[:, 'bins'] < 0 # mask for bins < 0
-        fr = d.loc[:, 'fr'] # firing rate
-        fr_m = fr.loc[ m ].mean() # mean firing rate for bins < 0
-        dfr = fr - fr_m # pre-cue subtracted firing rate
-        
-        ds = pd.Series(index=d.index, data=dfr.values)
-        dss.append(ds)
-
-    ds = pd.concat(dss)
-    df.loc[ds.index, 'dfr'] = ds.values
-
-    # # add absolute time 
-    # T = 0
-    # for _, d in df.groupby('trial', sort=True):
-
-    #     n = len(d.loc[:, 'bins'].unique())
-    #     df.loc[d.index, 'T'] = d.loc[:, 'bins'] + T
-    #     T += n
-    
-    # df.loc[:, 'T'] -= df.loc[:, 'T'].min()
-    
-    return df
 
 def filter_trials(df_unt, thresh=0.9, plot=False):
 
@@ -389,62 +410,41 @@ def plot_unit(rec, bin_size, unit, xlims=(None, None), path=''):
         plt.close(fig)
 
 
-def get_ypred(X, Y, dfx, dfy, basis_time, mod, scoring=None):
+def get_ypred(dfx_bin, dfy_bin, mod, scoring=None):
+    
+    X = dfx_bin.values
 
     # get prediction
     Y_pred = mod.predict(X)
 
     # get scores per unit
-    scores = [ cross_val_score(mod, X, Y[:, i], cv=10, scoring=scoring).mean() for i in range(Y.shape[1]) ]
+    cvs = lambda u: cross_val_score(mod, X, dfy_bin.loc[:, u].values, cv=10, scoring=scoring)
+    unt2score = { u: cvs(u).mean() for u in dfy_bin }
 
-    # get basis in bins
-    t2binx = pd.Series(dfx.loc[:, 'bins'].values, index=dfx.loc[:, 'T']).to_dict()
-    t2biny = pd.Series(dfy.loc[:, 'bins'].values, index=dfy.loc[:, 'T']).to_dict()
-    t2bin = t2binx | t2biny
+    return Y_pred, unt2score
 
-    # add t2trl mappint here
+def plot_mean_response(df_bin, arr_pred=None, scores={}, path=''):
 
-    # score mapping
-    units = dfy.loc[:, 'unit'].unique()
-    unt2score = { k: v for k, v in zip(units, scores)}
+    if arr_pred is not None:
+        df_bin_pred = df_bin.copy()
+        df_bin_pred.loc[:, :] = arr_pred
 
-    # convert back to long format
-    df_piv = pd.DataFrame(data=Y_pred, index=basis_time, columns=units)
-    df_stack = df_piv.stack()
-    v = df_stack.values
-    t, u = [ *df_stack.index.to_frame().values.T ]
-
-    dfy_pred = pd.DataFrame(data={
-        'unit': u.astype(int),
-        # 'trial': [ t2trl[i] for i in t ],
-        'pred': v,
-        'bins': [ t2bin[i] for i in t ],
-        'T': t,
-    })
-
-
-    return dfy_pred, unt2score
-
-def plot_mean_response(df, bin_size, signal, df_pred=None, scores={}, path=''):
-
-    df.loc[:, 'type'] = 'true'
-    df = df.rename(columns={signal: 'y'})
-    df.loc[:, 'x'] = df.loc[:, 'bins'] * bin_size
-
-    if df_pred is not None:
-        df_pred.loc[:, 'type'] = 'predicted'
-        df_pred = df_pred.rename(columns={'pred' : 'y'})
-        df_pred.loc[:, 'x'] = df_pred.loc[:, 'bins'] * bin_size
-        df = pd.concat([df, df_pred], ignore_index=True)
-
-    nu = len(df.loc[:, 'unit'].unique())
+    nu = len(df_bin.columns)
     nc = 5
     nr = int(np.ceil(nu / nc))
 
     fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(3*nc, 2*nr), squeeze=False)
 
-    for ax, (u, d) in zip(axmat.flatten(), df.groupby('unit')):
-        sns.lineplot(ax=ax, data=d, x='x', y='y', hue='type', errorbar='sd', legend=False)
+    for ax, u in zip(axmat.flatten(), df_bin.columns):
+
+        df = df_bin.loc[:, u].reset_index()
+        df.loc[:, 'type'] = 'true'
+        if arr_pred is not None:
+            df_pred = df_bin_pred.loc[:, u].reset_index()
+            df_pred.loc[:, 'type'] = 'pred'
+            df = pd.concat([df, df_pred])
+
+        sns.lineplot(ax=ax, data=df, x='bin', y=u, hue='type', errorbar='sd', legend=False)
 
         title = f'unit {u}'
         if scores:
