@@ -8,9 +8,11 @@ from custom_models import RRRegressor
 
 import matplotlib.pylab as plt
 import seaborn as sns
+plt.rcParams['savefig.facecolor'] = 'w'
+sns.set_style("whitegrid")
 
 
-def filter_data(rec, params):
+def set_trial_unit_filters(rec, params):
 
     # filter units/trials
     unts_rate = filter_rate(rec.df_spk, rec.df_unt, rec.df_trl, params['thresh_rate'])
@@ -75,34 +77,41 @@ def bin_spikes(df_spk, df_trl, bin_size):
 
 
 def select_data(rec1, params, rec2=None):
-    # TODO implement mean matching
 
-    filter_data(rec1, params)
+    # store filtered units and trials
+    set_trial_unit_filters(rec1, params)
     
-    df1 = rec1.df_spk.copy()
+    # load or calculate binned spikes
+    rec1.path_bin = rec1._path_name('bin{}.hdf'.format(params['bin_size']))
+    df1 = rec1._assign_df(rec1.path_bin, bin_spikes, {'df_spk': rec1.df_spk, 'df_trl': rec1.df_trl, 'bin_size': params['bin_size']})
     
     if rec2 is not None:
-        
-        filter_data(rec2, params)
 
-        df2 = rec2.df_spk.copy()
+        # store filtered units and trials
+        set_trial_unit_filters(rec2, params)
+
+        # load or calculate binned spikes
+        rec2.path_bin = rec2._path_name('bin{}.hdf'.format(params['bin_size']))
+        df2 = rec2._assign_df(rec2.path_bin, bin_spikes, {'df_spk': rec2.df_spk, 'df_trl': rec2.df_trl, 'bin_size': params['bin_size']})
 
         # select trials common to both
         trials =  rec1.trials & rec2.trials
-        df1 = df1.loc[ df1.loc[:, 'trial'].isin(trials) ]
-        df2 = df2.loc[ df2.loc[:, 'trial'].isin(trials) ]  
+        idx1 = df1.index.get_level_values(0).isin(trials) 
+        idx2 = df2.index.get_level_values(0).isin(trials)
+        assert np.array_equal(idx1, idx2)
 
         # select units
-        df1 = df1.loc[ df1.loc[:, 'unit'].isin(rec1.units) ]
-        df2 = df2.loc[ df2.loc[:, 'unit'].isin(rec2.units) ]
+        col1 = df1.columns.isin(rec1.units)
+        col2 = df2.columns.isin(rec2.units)
 
-        # bin spikes
-        df1_bin = bin_spikes(df1, rec1.df_trl, params['bin_size'])
-        df2_bin = bin_spikes(df2, rec2.df_trl, params['bin_size'])
+        # apply filters
+        df1 = df1.loc[ idx1, col1 ]
+        df2 = df2.loc[ idx2, col2 ]
+
 
     else: 
         # select trials
-        df1 = df1.loc[ df1.loc[:, 'trial'].isin(rec1.trials) ]
+        idx = df1.index.get_level_values(0).isin(rec1.trials)
 
         # select units
 
@@ -115,23 +124,24 @@ def select_data(rec1, params, rec2=None):
         s = int(n / 2)
         u1, u2 = unts[:-s], unts[-s:]
 
-        df2 = df1.loc[ df1.loc[:, 'unit'].isin(u2) ]
-        df1 = df1.loc[ df1.loc[:, 'unit'].isin(u1) ]
+        col1 = df1.columns.isin(u1)
+        col2 = df1.columns.isin(u2)
 
-        # bin spikes
-        df1_bin = bin_spikes(df1, rec1.df_trl, params['bin_size'])
-        df2_bin = bin_spikes(df2, rec1.df_trl, params['bin_size'])
+        # apply filters
+        df2 = df1.loc[ idx, col2 ]
+        df1 = df1.loc[ idx, col1 ]
+
 
     # discard rows with only nan in both dfx_bin and dfy_bin
-    m = df1_bin.isnull().all(axis=1) & df2_bin.isnull().all(axis=1)
-    df1_bin = df1_bin.loc[ ~m ]
-    df2_bin = df2_bin.loc[ ~m ]
+    m = df1.isnull().all(axis=1) & df2.isnull().all(axis=1)
+    df1 = df1.loc[ ~m ]
+    df2 = df2.loc[ ~m ]
 
     # fill all remaining nan with 0
-    df1_bin = df1_bin.fillna(0)
-    df2_bin = df2_bin.fillna(0)
+    df1 = df1.fillna(0)
+    df2 = df2.fillna(0)
 
-    return df1_bin, df2_bin
+    return df1, df2
 
 def subtract_baseline(df_bin, df_spk, interval=(-2, 0)):
 

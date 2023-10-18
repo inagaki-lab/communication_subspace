@@ -1,19 +1,16 @@
 
 import pandas as pd
 import numpy as np
-from scipy.ndimage import uniform_filter1d
 
 from scipy.io import loadmat
 from pathlib import Path
-
-from joblib import Parallel, delayed, parallel_backend
 
 import matplotlib.pylab as plt
 plt.rcParams['savefig.facecolor'] = 'w'
 
 class Recording:
 
-    def __init__(self, matlab_file, bin_size=1e-3, calc_psth=False, force_overwrite=False):
+    def __init__(self, matlab_file, force_overwrite=False):
 
         self.path_mat = Path(matlab_file)
         self.session = self.path_mat.with_suffix('').name
@@ -22,8 +19,7 @@ class Recording:
         self._path_name = lambda x : self.path_mat.parent / '{}_{}'.format(self.path_mat.with_suffix('').name, x)
 
         self.force_overwrite = force_overwrite
-        self.bin_size = bin_size
-
+  
         # load trial info
         self.path_trl = self._path_name('trl.parquet')
         self.df_trl = self._assign_df(self.path_trl, self._load_trial_info)
@@ -38,25 +34,30 @@ class Recording:
         self.path_spk = self._path_name('spk.parquet')
         self.df_spk = self._assign_df(self.path_spk, self._load_spike_times)
 
-        # calculate PSTH (optional)
-        if calc_psth:
-            self.path_psth = self._path_name(f'bin{self.bin_size}.parquet')
-            self.df_psth = self._assign_df(self.path_psth, self._calculate_psth)
-
 
     def _assign_df(self, path, function, kw=dict()):
 
+        if path.suffix == '.parquet':
+            read = lambda path: pd.read_parquet(path)
+            write = lambda df, path: df.to_parquet(path, compression='brotli')
+
+        elif path.suffix == '.hdf':
+            read = lambda path: pd.read_hdf(path)
+            write = lambda df, path: df.to_hdf(path, key='df', mode='w', complevel=9, complib='bzip2')
+
+        else:
+            raise NotImplementedError(f'Does not know how to handle `{path.suffix}` (only implemented `.parquet` and `.hdf`)')
+
         if path.is_file() and not self.force_overwrite:
-            df = pd.read_parquet(path)
+            df = read(path)
         else:
             df = function(**kw)
-            df.to_parquet(path, compression='brotli')
+            write(df, path)
 
         return df
 
 
     def _load_matlab(self):
-
         
         try: # check if matlab file has been loaded
             self._matlab
@@ -121,42 +122,6 @@ class Recording:
 
         return df
 
-    # def _load_raw_trial_info(self):
-
-    #     m = self._load_matlab()
-
-    #     # sample rate
-    #     sample_rate = vars(vars(vars(m['unit'][0])['Meta_data'])['parameters'])['Sample_Rate']
-
-    #     # sample start in absolute time
-    #     T_onset = np.array([vars(i)['onset'] for i in m['trial_info']]) / sample_rate
-
-    #     behavior = vars(vars(m['unit'][0])['Behavior'])
-    #     t_cue = behavior['Sample_start']
-    #     t_pre = behavior['PreSample']
-    #     T_cue = T_onset + t_cue - t_pre
-    #     T_on = T_onset - t_pre
-
-    #     # valid trial range
-    #     trl_min, trl_max = self._get_trial_range()
-    #     trl = np.arange(trl_min, trl_max + 1)
-    #     i_trl = trl - 1 
-
-    #     df = pd.DataFrame(data={
-    #         'trial' : trl,
-    #         'T_0'   : T_on[i_trl],
-    #         'T_f'   : T_on[i_trl + 1],
-    #         'T_cue' : T_cue[i_trl],
-    #         't_0'   : 0,
-    #         't_f'   : T_on[i_trl+1] - T_on[i_trl],
-    #         't_cue' : t_cue[i_trl],
-    #     })
-
-    #     df.loc[:, 'dt_0'] = -df.loc[:, 't_cue']
-    #     df.loc[:, 'dt_f'] = df.loc[:, 't_f'] - df.loc[:, 't_cue']
-    #     df = df.astype({'trial': int})
-
-    #     return df
 
     def _load_unit_info(self):
         
@@ -244,201 +209,3 @@ class Recording:
         df = pd.concat(l, ignore_index=True)     
 
         return df
-    
-    # def _load_raw_spike_times(self):
-        
-    #     m = self._load_matlab()
-        
-    #     df = pd.DataFrame()
-
-    #     for i, u in enumerate(m['unit']):
-    #         t = vars(u)['RawSpikeTimes']
-
-    #         d = pd.DataFrame(data={
-    #             'T': t,
-    #             'unit': i + 1,
-    #         })
-
-    #         df = pd.concat([df, d], ignore_index=True)
-
-        
-    #     for i in self.df_trl.index:
-
-    #         trl, T_0, T_f, T_cue = self.df_trl.loc[ i, ['trial', 'T_0', 'T_f', 'T_cue'] ]
-
-    #         idx_trl = df.loc[ (df.loc[:, 'T'] > T_0) & (df.loc[:, 'T'] < T_f) ].index
-            
-    #         df.loc[idx_trl, 'trial'] = trl
-    #         df.loc[idx_trl, 't'] = df.loc[idx_trl, 'T'] - T_0
-    #         df.loc[idx_trl, 'dt'] = df.loc[idx_trl, 'T'] - T_cue
-            
-    #     df = df.dropna(axis=0)
-
-    #     df = df.astype({'trial': int})
-
-    #     return df
-
-
-    # def fun(self, unt, df, bin_size):
-
-    #     unts, trls, binss, hists = [], [], [], []
-
-    #     for trl, d in df.groupby('trial'):
-    #         t0, tf = self.df_trl.groupby('trial').get_group(trl).loc[:, ['dt0', 'dtf']].values[0]
-    #         t_spk = d.loc[:, 't'].values
-
-    #         bins = np.arange(int(t0 / bin_size), int(tf / bin_size))
-    #         t2hist = lambda t: np.histogram((t / bin_size).astype(int), bins=bins)[0]
-    #         hist = t2hist(t_spk)
-
-    #         hists.extend([*hist])
-    #         binss.extend([*bins[:-1]])
-    #         unts.extend([unt] * len(hist))
-    #         trls.extend([trl] * len(hist))
-
-    #     return hists, binss, unts, trls
-    
-    # def _calculate_psth(self, bin_size=None):
-
-    #     bin_size = bin_size if bin_size else self.bin_size
-
-    #     unts, trls, binss, hists = [], [], [], []
-
-    #     from itertools import chain
-
-
-        
-    #     with parallel_backend('loky', n_jobs=1):
-    #         res = Parallel()(
-    #             delayed(
-    #                 self.fun)(unt, df, bin_size) for unt, df in self.df_spk.groupby('unit'))
-    #     print('done')
-    #     h, b, u, t = res
-    #     hists = chain(h)
-    #     binss = chain(b)
-    #     unts = chain(u)
-    #     trls = chain(t)
-
-    #     data = np.array([unts, trls, binss, hists]).T
-    #     df = pd.DataFrame(data, columns=['unit', 'trial', 'bins', 'hist'])
-    #     df = df.astype({'unit': int, 'trial': int, 'bins': int})
-
-    #     return df
-    
-    
-    def _calculate_psth(self, bin_size=None):
-
-        bin_size = bin_size if bin_size else self.bin_size
-
-        unts, trls, binss, hists = [], [], [], []
-
-        for (unt, trl), df in self.df_spk.groupby(['unit', 'trial']):
-                
-            t0, tf = self.df_trl.groupby('trial').get_group(trl).loc[:, ['dt0', 'dtf']].values[0]
-            t_spk = df.loc[:, 't'].values
-
-            bins = np.arange(int(t0 / bin_size), int(tf / bin_size))
-            t2hist = lambda t: np.histogram((t / bin_size).astype(int), bins=bins)[0]
-            hist = t2hist(t_spk)
-
-            hists.extend([*hist])
-            binss.extend([*bins[:-1]])
-            unts.extend([unt] * len(hist))
-            trls.extend([trl] * len(hist))
-
-        data = np.array([unts, trls, binss, hists]).T
-        df = pd.DataFrame(data, columns=['unit', 'trial', 'bins', 'hist'])
-        df = df.astype({'unit': int, 'trial': int, 'bins': int})
-
-        return df
-    
-    # def _calculate_raw_psth(self, align='start', bin_size=None):
-
-    #     bin_size = bin_size if bin_size else self.bin_size
-
-    #     if align == 'cue':
-    #         c_t, c_t0, c_tf = 'dt', 'dt_0', 'dt_f'
-    #     elif align == 'start':
-    #         c_t, c_t0, c_tf = 't', 't_0', 't_f'
-    #     else:
-    #         c_t, c_t0, c_tf = 'T', 'T_0', 'T_f'
-
-
-    #     unts, trls, binss, hists = [], [], [], []
-
-    #     for (unt, trl), df in self.df_spk.groupby(['unit', 'trial']):
-                
-    #         t0, tf = self.df_trl.groupby('trial').get_group(trl).loc[:, [c_t0, c_tf]].values[0]
-    #         t_spk = df.loc[:, c_t].values
-
-    #         bins = np.arange(int(t0 / bin_size), int(tf / bin_size))
-    #         t2hist = lambda t: np.histogram((t / bin_size).astype(int), bins=bins)[0]
-    #         hist = t2hist(t_spk)
-
-    #         hists.extend([*hist])
-    #         binss.extend([*bins[:-1]])
-    #         unts.extend([unt] * len(hist))
-    #         trls.extend([trl] * len(hist))
-
-    #     data = np.array([unts, trls, binss, hists]).T
-    #     df = pd.DataFrame(data, columns=['unit', 'trial', 'bins', 'hist'])
-    #     df = df.astype({'unit': int, 'trial': int, 'bins': int})
-
-
-    #     return df
-    
-    
-    def plot_psth(self, filter_size=50, xlims=(None, None), unts=None, path=''):
-
-        if unts is None:
-            unts = self.df_unt.loc[:, 'unit'].unique()
-        nu = len(unts)
-        nc = 5
-        nr = int(np.ceil(nu / nc))
-
-        fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(3*nc, 2*nr), squeeze=False)
-        fig.suptitle('PSTH | moving average {} ms | {}'.format(filter_size, self.session), y=1.0)
-        gr_psth = self.df_psth.groupby('unit')
-        gr_unt = self.df_unt.groupby('unit')
-
-        for unt, ax in zip(unts, axmat.flatten()):
-
-            trl_i = gr_unt.get_group(unt).loc[:, 'first_trial'].item()
-            trl_f = gr_unt.get_group(unt).loc[:, 'last_trial'].item()
-            trls = [ *range(trl_i, trl_f + 1) ]
-
-            df = gr_psth.get_group(unt)
-            df = df.loc[ df.loc[:, 'trial'].isin(trls) ]
-
-            ds = df.groupby('bins').mean(numeric_only=True).loc[:, 'hist'].sort_index()
-
-            x, y = ds.index, ds.values
-            x = x * self.bin_size
-        
-            y = uniform_filter1d(y, size=int(filter_size * 1e-3 / self.bin_size)) / self.bin_size
-            if xlims != (None, None):
-                mask = ( (x > xlims[0]) & (x < xlims[1]) )
-                x, y = x[mask], y[mask]
-            ax.plot(x, y)
-            # ax.set_xlim(xlims)
-
-            ax.axvline(0, color='gray', lw=1, ls='--')
-            ax.axhline(0, color='gray', lw=1)
-
-            ax.set_title('unit {} | trials = [{}, {}]'.format(unt, trl_i, trl_f))
-            ax.margins(x=0)
-            ax.set_xlabel('')
-            ax.set_ylabel('')
-
-        for ax in axmat[-1]:
-            ax.set_xlabel('time from cue [s]')
-        for ax in axmat.T[0]:
-            ax.set_ylabel('firing rate [Hz]')
-        for ax in axmat.flatten()[len(unts):]:
-            ax.axis('off')
-
-
-        fig.tight_layout()
-        if path:
-            fig.savefig(path)
-            plt.close(fig)
