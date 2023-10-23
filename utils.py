@@ -180,7 +180,7 @@ def select_epoch(df_bin, epoch, df_trl=None):
 
     if align == 'cue':
         # bins are already aligned to cue
-        df_epo = df_bin.loc[ (slice(None), slice(t0, tf)), :]
+        df_epo = df_bin.loc[ (slice(None), slice(t0, tf)), :].copy() # copy necessary?
 
     elif align == 'lick':
 
@@ -194,8 +194,7 @@ def select_epoch(df_bin, epoch, df_trl=None):
         dfs = [] # collect relevant dataframes here
         for trl in np.unique(df_bin.index.get_level_values(0)):
             t_lck = trl2lck[trl]
-            t0, tf = t0 + t_lck, tf + t_lck
-            df = df_bin.loc[ ([trl], slice(t0, tf)), : ]
+            df = df_bin.loc[ ([trl], slice(t0 + t_lck, tf + t_lck)), : ]
             dfs.append(df)
 
         # combine snippets again
