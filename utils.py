@@ -12,14 +12,14 @@ plt.rcParams['savefig.facecolor'] = 'w'
 sns.set_style("whitegrid")
 
 
-def set_trial_unit_filters(rec, params):
+def set_trial_unit_filters(rec, rate_range, sw_range, perc_trial):
 
     # filter units/trials
-    unts_rate = filter_rate(rec.df_spk, rec.df_unt, rec.df_trl, params['thresh_rate'])
-    unts_sw = filter_sw(rec.df_unt, params['thresh_sw'])
+    unts_rate = filter_rate(rec.df_spk, rec.df_unt, rec.df_trl, *rate_range)
+    unts_sw = filter_sw(rec.df_unt, *sw_range)
 
     m = rec.df_unt.loc[:, 'unit'].isin(unts_rate & unts_sw)
-    unts_range, trls_range = filter_trials(rec.df_unt.loc[m], thresh=params['thresh_trials'], plot=False)
+    unts_range, trls_range = filter_trials(rec.df_unt.loc[m], thresh=perc_trial, plot=False)
 
     rec.units = unts_rate & unts_sw & unts_range
     rec.trials = trls_range
@@ -79,7 +79,10 @@ def bin_spikes(df_spk, df_trl, bin_size):
 def select_data(rec1, params, rec2=None):
 
     # store filtered units and trials
-    set_trial_unit_filters(rec1, params)
+    set_trial_unit_filters(rec1, 
+                           rate_range=params['rate_src'], 
+                           sw_range=params['spike_width_src'], 
+                           perc_trial=params['perc_trials'])
     
     # load or calculate binned spikes
     rec1.path_bin = rec1._path_name('bin{}.hdf'.format(params['bin_size']))
@@ -88,8 +91,11 @@ def select_data(rec1, params, rec2=None):
     if rec2 is not None:
 
         # store filtered units and trials
-        set_trial_unit_filters(rec2, params)
-
+        set_trial_unit_filters(rec1, 
+                            rate_range=params['rate_trg'], 
+                            sw_range=params['spike_width_trg'], 
+                            perc_trial=params['perc_trials'])
+        
         # load or calculate binned spikes
         rec2.path_bin = rec2._path_name('bin{}.hdf'.format(params['bin_size']))
         df2 = rec2._assign_df(rec2.path_bin, bin_spikes, {'df_spk': rec2.df_spk, 'df_trl': rec2.df_trl, 'bin_size': params['bin_size']})
@@ -364,15 +370,25 @@ def filter_trials(df_unt, thresh=0.9, plot=False):
     return unts, trls
 
 
-def filter_sw(df_unt, thresh):
-
+def filter_sw(df_unt, sw_min=None, sw_max=None):
+    
     # filter based on spike width
-    m = df_unt.loc[:, 'spike_width'] > thresh
-    unts = set(df_unt.loc[ m, 'unit'])
+    sw = df_unt.loc[:, 'spike_width']
+    m = sw == sw # DataSeries with all `True` if not nan
+
+    if sw_min is not None:
+        m_min = sw > sw_min
+        m = m & m_min
+
+    if sw_max is not None:
+        m_max = sw < sw_max
+        m = m & m_max
+
+    unts = { *df_unt.loc[ m, 'unit'] }
 
     return unts
 
-def filter_rate(df_spk, df_unt, df_trl, thresh):
+def filter_rate(df_spk, df_unt, df_trl, r_min=None, r_max=None):
 
     # get mapping from trial to duration
     df = df_trl.loc[:, ['trial', 'dt0', 'dtf']].copy()
@@ -391,8 +407,18 @@ def filter_rate(df_spk, df_unt, df_trl, thresh):
     # average firing rate
     df.loc[:, 'rate'] = df.loc[:, 'size'] / df.loc[:, 'unit'].map(d)
 
-    # select units based on rate threshold 
-    m = df.loc[:, 'rate'] > thresh
+    # select units based on rate threshold
+    rate = df.loc[:, 'rate']
+    m = rate == rate # DataSeries with all `True` if not nan
+
+    if r_min is not None:
+        m_min = rate > r_min
+        m = m & m_min
+
+    if r_max is not None:
+        m_max = rate < r_max
+        m = m & m_max
+
     unts = { *df.loc[m, 'unit'] }  
 
     return unts
