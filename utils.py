@@ -12,6 +12,25 @@ plt.rcParams['savefig.facecolor'] = 'w'
 sns.set_style("whitegrid")
 
 
+def filter_trial_types(rec, params):
+    
+    l_incl = params['type_incl']
+    tt = rec.df_trl.loc[:, 'trial_type']
+    
+    if l_incl:
+        # only trials starting with strings defined in l_incl
+        l_ds = [ tt.str.startswith(s) for s in l_incl ]
+        df = pd.concat(l_ds, axis=1)
+        m = df.any(axis=1)
+
+    else:
+        # all trials
+        m = tt == tt
+
+    trials = { *rec.df_trl.loc[m, 'trial'] }
+    
+    return trials
+
 def set_trial_unit_filters(rec, rate_range, sw_range, perc_trial):
 
     # filter units/trials
@@ -78,6 +97,9 @@ def bin_spikes(df_spk, df_trl, bin_size):
 
 def select_data(rec1, params, rec2=None):
 
+    # get trial to include based on trial type
+    trials_incl = filter_trial_types(rec1, params)
+
     # store filtered units and trials
     set_trial_unit_filters(rec1, 
                            rate_range=params['rate_src'], 
@@ -101,7 +123,7 @@ def select_data(rec1, params, rec2=None):
         df2 = rec2._assign_df(rec2.path_bin, bin_spikes, {'df_spk': rec2.df_spk, 'df_trl': rec2.df_trl, 'bin_size': params['bin_size']})
 
         # select trials common to both
-        trials =  rec1.trials & rec2.trials
+        trials =  rec1.trials & rec2.trials & trials_incl
         idx1 = df1.index.get_level_values(0).isin(trials) 
         idx2 = df2.index.get_level_values(0).isin(trials)
         assert np.array_equal(idx1, idx2)
@@ -114,10 +136,9 @@ def select_data(rec1, params, rec2=None):
         df1 = df1.loc[ idx1, col1 ]
         df2 = df2.loc[ idx2, col2 ]
 
-
     else: 
         # select trials
-        idx = df1.index.get_level_values(0).isin(rec1.trials)
+        idx = df1.index.get_level_values(0).isin(rec1.trials & trials_incl)
 
         # select units
 

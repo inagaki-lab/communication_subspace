@@ -99,6 +99,9 @@ class Recording:
         dt_cue = 0
         dt_lck = t_lck - t_cue
 
+        # trial type
+        typ = beh['stim_type_name']
+
         # response types
         i_res = beh['Trial_types_of_response_vector']
         res = beh['Trial_types_of_response']
@@ -116,6 +119,7 @@ class Recording:
             'dt_lck'        : dt_lck,
             'dt0'           : -dt,
             'dtf'           : dt_lck + dt,
+            'trial_type'    : typ,
             'response'      : res,
             'response_id'   : i_res,
         })
