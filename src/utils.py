@@ -1,41 +1,165 @@
 import pandas as pd
 import numpy as np
-from scipy.ndimage import  gaussian_filter1d
-
-from src.recording import Recording
 
 from sklearn.model_selection import GridSearchCV, cross_val_score
-from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Ridge
 from sklearn.pipeline import Pipeline
 from src.custom_models import RRRegressor
 
 import matplotlib.pylab as plt
 import seaborn as sns
+plt.rcParams['savefig.facecolor'] = 'w'
+sns.set_style("whitegrid")
 
 
-def select_data(rec1, bin_size, rec2=None):
-    # TODO implement mean matching
+def filter_trials_thresh(rec, params):
     
-    # load from disk
-    df1 = pd.read_parquet(rec1._path_name(f'bin{bin_size}.parquet'))
+    # filter based on trial type
+    l_incl = params['type_incl']
+    tt = rec.df_trl.loc[:, 'trial_type']
+    
+    if l_incl:
+        # only trials starting with strings defined in l_incl
+        l_ds = [ tt.str.startswith(s) for s in l_incl ]
+        df = pd.concat(l_ds, axis=1)
+        m_tt = df.any(axis=1)
+
+    else:
+        # all trials
+        m_tt = tt == tt
+    
+    # filter based on lick time
+    lck_min, lck_max = params['first_lick']
+    
+    lck = rec.df_trl.loc[:, 'dt_lck']
+    m_lck = lck == lck # DataSeries with all True for not nan
+
+    if lck_min is not None:
+        m = lck > lck_min
+        m_lck = m_lck & m
+    
+    if lck_max is not None:
+        m = lck < lck_max
+        m_lck = m_lck & m
+    
+    m = m_tt & m_lck
+    trials = { *rec.df_trl.loc[m, 'trial'] }
+    
+    return trials
+
+def set_trial_unit_filters(rec, rate_range, sw_range, perc_trial):
+
+    # filter units/trials
+    unts_rate = filter_rate(rec.df_spk, rec.df_unt, rec.df_trl, *rate_range)
+    unts_sw = filter_sw(rec.df_unt, *sw_range)
+
+    m = rec.df_unt.loc[:, 'unit'].isin(unts_rate & unts_sw)
+    if m.any():
+        unts_range, trls_range = filter_trials(rec.df_unt.loc[m], thresh=perc_trial, plot=False)
+
+        rec.units = unts_rate & unts_sw & unts_range
+        rec.trials = trls_range
+    else:
+        print(f'INFO: 0 units after filtering left for {rec.session}')
+        rec.units = set()
+        rec.trials = set()
+
+
+def bin_spikes(df_spk, df_trl, bin_size):
+
+    # get dict with bin sized per trial
+    trl2bin = dict()
+    for trl, t0, tf in df_trl.loc[:, ['trial', 'dt0', 'dtf']].itertuples(index=False):
+        tf = tf - tf % bin_size # clip last bin
+        if tf != tf: # skip trials with nan as end
+            continue
+
+        # construct bins
+        b = np.arange(t0, tf + bin_size, bin_size)    
+        trl2bin[trl] = b
+
+    # define basis for array
+    unts = df_spk.loc[:, 'unit'].unique()
+    i_trl = np.concatenate([ (len(v)-1) * [ k ] for k, v in trl2bin.items() ])
+    i_bin = np.concatenate([ v[:-1] for k, v in trl2bin.items() ])
+
+    # initialize array
+    X = np.empty((len(i_trl), len(unts)))
+    X[:] = np.nan
+
+    # fill array
+    for trl, df in df_spk.groupby('trial'):
+
+        # get bins
+        bins = trl2bin[trl]
+        
+        # apply bin to each unit
+        gr = df.groupby('unit')
+        df = gr.apply(lambda x: np.histogram(x.loc[:, 't'], bins)[0]).apply(pd.Series)
+        df /= bin_size # spikes per bin -> spikes per s
+
+        # select correct indices for array
+        s0 = i_trl == trl
+        s1 = np.isin(unts, df.index)
+        idx = np.ix_(s0, s1)
+
+        # assign values to array
+        X[ idx ] = df.values.T
+
+    # convert to dataframe with multiindex
+    df = pd.DataFrame(
+        data=X, 
+        index=pd.MultiIndex.from_arrays([i_trl, i_bin], names=('trial', 'bin')), 
+        columns=unts)
+    
+    return df    
+
+
+
+def select_data(rec1, params, rec2=None):
+
+    # get trial to include based on trial type
+    trials_incl = filter_trials_thresh(rec1, params)
+
+    # store filtered units and trials
+    set_trial_unit_filters(rec1, 
+                           rate_range=params['rate_src'], 
+                           sw_range=params['spike_width_src'], 
+                           perc_trial=params['perc_trials'])
+    
+    # load or calculate binned spikes
+    rec1.path_bin = rec1._path_tmp / 'bin{}.hdf'.format(params['bin_size'])
+    df1 = rec1._assign_df(rec1.path_bin, bin_spikes, {'df_spk': rec1.df_spk, 'df_trl': rec1.df_trl, 'bin_size': params['bin_size']})
     
     if rec2 is not None:
-        # load from disk
-        df2 = pd.read_parquet(rec2._path_name(f'bin{bin_size}.parquet'))
+
+        # store filtered units and trials
+        set_trial_unit_filters(rec1, 
+                            rate_range=params['rate_trg'], 
+                            sw_range=params['spike_width_trg'], 
+                            perc_trial=params['perc_trials'])
+        
+        # load or calculate binned spikes
+        rec2.path_bin = rec2._path_tmp / 'bin{}.hdf'.format(params['bin_size'])
+        df2 = rec2._assign_df(rec2.path_bin, bin_spikes, {'df_spk': rec2.df_spk, 'df_trl': rec2.df_trl, 'bin_size': params['bin_size']})
 
         # select trials common to both
-        trials =  rec1.trials & rec2.trials
-        df1 = df1.loc[ df1.loc[:, 'trial'].isin(trials) ]
-        df2 = df2.loc[ df2.loc[:, 'trial'].isin(trials) ]  
+        trials =  rec1.trials & rec2.trials & trials_incl
+        idx1 = df1.index.get_level_values(0).isin(trials) 
+        idx2 = df2.index.get_level_values(0).isin(trials)
+        assert np.array_equal(idx1, idx2)
 
         # select units
-        df1 = df1.loc[ df1.loc[:, 'unit'].isin(rec1.units) ]
-        df2 = df2.loc[ df2.loc[:, 'unit'].isin(rec2.units) ]
+        col1 = df1.columns.isin(rec1.units)
+        col2 = df2.columns.isin(rec2.units)
+
+        # apply filters
+        df1 = df1.loc[ idx1, col1 ]
+        df2 = df2.loc[ idx2, col2 ]
 
     else: 
         # select trials
-        df1 = df1.loc[ df1.loc[:, 'trial'].isin(rec1.trials) ]
+        idx = df1.index.get_level_values(0).isin(rec1.trials & trials_incl)
 
         # select units
 
@@ -48,59 +172,90 @@ def select_data(rec1, bin_size, rec2=None):
         s = int(n / 2)
         u1, u2 = unts[:-s], unts[-s:]
 
-        df2 = df1.loc[ df1.loc[:, 'unit'].isin(u2) ]
-        df1 = df1.loc[ df1.loc[:, 'unit'].isin(u1) ]
+        col1 = df1.columns.isin(u1)
+        col2 = df1.columns.isin(u2)
 
-    # convert hist to firing rate, subtract pre=cue
-    df1 = rate_and_time(df1, bin_size)
-    df2 = rate_and_time(df2, bin_size)
+        # apply filters
+        df2 = df1.loc[ idx, col2 ]
+        df1 = df1.loc[ idx, col1 ]
+
+
+    # discard rows with only nan in both dfx_bin and dfy_bin
+    m = df1.isnull().all(axis=1) & df2.isnull().all(axis=1)
+    df1 = df1.loc[ ~m ]
+    df2 = df2.loc[ ~m ]
+
+    # fill all remaining nan with 0
+    df1 = df1.fillna(0)
+    df2 = df2.fillna(0)
 
     return df1, df2
 
-def get_matrix(df):
+def subtract_baseline(df_bin, df_spk, interval=(-2, 0)):
 
-    # convert to matrix
-    df_mat = pd.pivot_table(df, values='dfr', index='T', columns='unit').fillna(0)
+    # select only spikes within `interval`
+    t0, tf = interval
+    t = df_spk.loc[:, 't']
+    m = (t < tf) & ( t > t0 )
+    df = df_spk.loc[m]
 
-    return df_mat
-
-def matrix2df(X, dfx):
-
-    t = dfx.loc[:, 'T'].values
-    bins = dfx.loc[:, 'bins'].values
-    trl = dfx.loc[:, 'trial'].values
-    t2bins = pd.Series(index=t, data=bins).to_dict()   
-    t2trl = pd.Series(index=t, data=trl).to_dict()   
+    # number of spikes per unit per trial
+    df_n = df.groupby(['unit', 'trial']).size()
     
-    df_piv = pd.pivot_table(dfx, values='dfr', index='T', columns='unit').fillna(0)
-    df_piv.loc[:, :] = X
-    df_stack = df_piv.stack()
-    dfr = df_stack.values
-    t, unt  = [ *df_stack.index.to_frame().values.T ]
-    df = pd.DataFrame(data={
-        'unit': unt.astype(int),
-        'trial': [ t2trl[i] for i in t ],
-        'dfr': dfr,
-        'bins': [ t2bins[i] for i in t ],
-        'T': t,
-    })
+    # convert to rate
+    dt = tf - t0
+    df_r = df_n / dt
 
-    return df
+    # convert to pivot table
+    df_r = df_r.reset_index()
+    df_r = pd.pivot_table(data=df_r, index='trial', columns='unit', values=0)
+    # nan implies 0 Hz 
+    df_r = df_r.fillna(0)
 
+    # match structure with `df_bin`
+    idx = np.unique(df_bin.index.get_level_values(0))
+    cols = df_bin.columns
+    df_r = df_r.loc[ idx, cols]
 
-def linear_regression(X, Y, cv=10):
+    # subtract
+    df_bin0 = df_bin.subtract(df_r)
 
-    pipe = Pipeline(steps=[
-        # ('scaler', StandardScaler()),
-        ('mod', LinearRegression())
-    ])
+    return df_bin0
 
-    scores = cross_val_score(pipe, X, Y, cv=cv)
+def select_epoch(df_bin, epoch, df_trl=None):
 
-    return scores
+    t0, tf, align = epoch
 
+    if align == 'cue':
+        # bins are already aligned to cue
+        df_epo = df_bin.loc[ (slice(None), slice(t0, tf)), :].copy() # copy necessary?
 
-def ridge_regression(X, Y, alphas):
+    elif align == 'lick':
+
+        # check if df_trl has been passed
+        assert df_trl is not None, f'Need df_trl when aligning to {align}'
+        
+        # map trial to lick time ('dt_lck' is aligned to cue)
+        trl2lck = { k: v for k, v in df_trl.loc[:, ['trial', 'dt_lck']].itertuples(index=False)}
+
+        # cycle trhough trials in df_bin
+        dfs = [] # collect relevant dataframes here
+        for trl in np.unique(df_bin.index.get_level_values(0)):
+            t_lck = trl2lck[trl]
+            df = df_bin.loc[ ([trl], slice(t0 + t_lck, tf + t_lck)), : ]
+            dfs.append(df)
+
+        # combine snippets again
+        df_epo = pd.concat(dfs)
+
+    else:
+        raise NotImplementedError(f'Do not know how to align to {align}')
+
+    return df_epo
+
+def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None):
+    
+    X, Y = dfx_bin.values, dfy_bin.values
 
     pipe = Pipeline(steps=[
         # ('scaler', StandardScaler()),
@@ -110,16 +265,22 @@ def ridge_regression(X, Y, alphas):
     grd = GridSearchCV(
         pipe, 
         { 'mod__alpha': alphas, },
+        scoring=scoring,
         cv=10,
-        n_jobs=-1
+        n_jobs=-1,
     )
 
     mods = grd.fit(X, Y)
+
     return mods
 
 
-def reduced_rank_regression(X, Y, max_rank):
+def reduced_rank_regression(dfx_bin, dfy_bin, max_rank=None, scoring=None):
 
+    X, Y = dfx_bin.values, dfy_bin.values
+
+    if max_rank is None:
+        max_rank = Y.shape[1]
     r = np.arange(max_rank) + 1
 
     pipe = Pipeline(steps=[
@@ -130,6 +291,7 @@ def reduced_rank_regression(X, Y, max_rank):
     grd = GridSearchCV(
         pipe, 
         { 'mod__r': r, },
+        scoring=scoring,
         cv=10,
         n_jobs=-1,
     )
@@ -157,7 +319,7 @@ def plot_rate_dist(X, Y, path=''):
         fig.savefig(path)
         plt.close(fig)
 
-def plot_gridsearch(mods, param, other_mods=dict(), logscale=True):
+def plot_gridsearch(mods, param, other_mods=dict(), logscale=True, path=''):
 
     # plot ridge
     df = pd.DataFrame(mods.cv_results_)
@@ -177,7 +339,7 @@ def plot_gridsearch(mods, param, other_mods=dict(), logscale=True):
         x = np.array(*ds.loc['params'].values()).item()
         y, yerr = ds.loc['mean_test_score'], ds.loc['std_test_score'] / np.sqrt(ncv)
         ax.axhline(y, lw=1, label=name, c=f'C{i+1}')
-        ax.axhline(y+yerr, ls=':', lw=1, label=name, c=f'C{i+1}')
+        ax.axhline(y+yerr, ls=':', lw=1, c=f'C{i+1}')
         ax.axhline(y-yerr, ls=':', lw=1, c=f'C{i+1}')
 
     ax.legend()
@@ -188,45 +350,17 @@ def plot_gridsearch(mods, param, other_mods=dict(), logscale=True):
     if logscale:
         ax.set_xscale('log')
 
-# def smooth_psth(df, sigma, bin_size):
-#     'filter size in [s]'
+    fig.tight_layout()
+    if path:
+        fig.savefig(path)
+        plt.close(fig)
 
-#     for _, d in df.groupby('unit'):
-
-#         y = d.loc[:, 'hist'].values
-#         y = y.astype(float)
-        
-#         y = gaussian_filter1d(y, sigma=sigma / bin_size) / bin_size
-
-#         df.loc[d.index, 'fr'] = y
-
-#     return df
-
-def rate_and_time(df, bin_size):
+def save_cv_results(mods, path):
     
-    # convert hist to firing rate
-    y = df.loc[:, 'hist'].values.astype(float)
-    y = y / bin_size
-    df.loc[:, 'fr'] = y
-
-    # subtract mean firing rate before cue (bins < 0)
-    for _, d in df.groupby(['unit', 'trial']):
-        
-        m = d.loc[:, 'bins'] < 0 # mask for bins < 0
-        fr = d.loc[:, 'fr'] # firing rate
-        fr_m = fr.loc[ m ].mean() # mean firing rate for bins < 0
-        df.loc[d.index, 'dfr'] = fr - fr_m # pre-cue subtracted firing rate
-
-    # add absolute time 
-    T = 0
-    for _, d in df.groupby('trial'):
-        n = len(d.loc[:, 'bins'].unique())
-        df.loc[d.index, 'T'] = d.loc[:, 'bins'] + T
-        T += n
+    df = pd.DataFrame(mods.cv_results_)
     
-    df.loc[:, 'T'] -= df.loc[:, 'T'].min()
-    
-    return df
+    df.to_parquet(path)
+
 
 def filter_trials(df_unt, thresh=0.9, plot=False):
 
@@ -273,34 +407,64 @@ def filter_trials(df_unt, thresh=0.9, plot=False):
     df = df_unt.loc[ df_unt.loc[:, 'unit'].isin(unts) ]
     trl_min = df.loc[:, 'first_trial'].max()
     trl_max = df.loc[:, 'last_trial'].max()
-    trls = { *range(trl_min, trl_max + 1) }
+    if (trl_min != trl_min) or (trl_max != trl_max):
+        trls = set()
+    else:
+        trls = { *range(trl_min, trl_max + 1) }
 
     return unts, trls
 
 
-def filter_rates(df_psth, thresh, plot=False):
+def filter_sw(df_unt, sw_min=None, sw_max=None):
+    
+    # filter based on spike width
+    sw = df_unt.loc[:, 'spike_width']
+    m = sw == sw # DataSeries with all `True` if not nan
 
-    d = pd.pivot_table(data=df_psth, values='fr', index='unit', columns='T')
-    d = d.fillna(0).mean(axis=1)
+    if sw_min is not None:
+        m_min = sw > sw_min
+        m = m & m_min
 
-    if plot:
-        fig, ax = plt.subplots()
+    if sw_max is not None:
+        m_max = sw < sw_max
+        m = m & m_max
 
-        sns.histplot(data=d.values, ax=ax, cumulative=True, binwidth=0.5, element='step', fill=False)
-        ax.axvline(thresh, ls=':', c='gray')
-        ax.set_xlabel('rate [Hz]')
-
-        fig.tight_layout()
-
-    d = d.loc[d > thresh]
-    unts = { *d.index }
+    unts = { *df_unt.loc[ m, 'unit'] }
 
     return unts
 
-def filter_spike_width(df_unt, thresh):
+def filter_rate(df_spk, df_unt, df_trl, r_min=None, r_max=None):
 
-    m = df_unt.loc[:, 'spike_width'] > thresh
-    unts = set(df_unt.loc[ m, 'unit'])
+    # get mapping from trial to duration
+    df = df_trl.loc[:, ['trial', 'dt0', 'dtf']].copy()
+    df.loc[:, 'dur'] = df.loc[:, 'dtf'] - df.loc[:, 'dt0']
+    ds = df.set_index('trial').loc[:, 'dur']
+
+    # get duration for each unit
+    d = dict()
+    for u, f, l in df_unt.loc[:, ['unit', 'first_trial', 'last_trial']].itertuples(index=False):
+        dur = np.nansum([ ds.loc[i] for i in range(f, l+1) ])
+        d[u] = dur
+
+    # number of spikes per unit
+    df = df_spk.groupby('unit', as_index=False).size()
+
+    # average firing rate
+    df.loc[:, 'rate'] = df.loc[:, 'size'] / df.loc[:, 'unit'].map(d)
+
+    # select units based on rate threshold
+    rate = df.loc[:, 'rate']
+    m = rate == rate # DataSeries with all `True` if not nan
+
+    if r_min is not None:
+        m_min = rate > r_min
+        m = m & m_min
+
+    if r_max is not None:
+        m_max = rate < r_max
+        m = m & m_max
+
+    unts = { *df.loc[m, 'unit'] }  
 
     return unts
 
@@ -340,12 +504,12 @@ def plot_missing(df_psth, bin_size, vmax=None, path=''):
         fig.savefig(path)
         plt.close(fig)
 
-def plot_unit(df_psth, rec, bin_size, unit, xlims=(None, None), path=''):
+def plot_unit(rec, bin_size, unit, xlims=(None, None), path=''):
 
 
     fig, ax = plt.subplots(figsize=(20, 5))
 
-    d = df_psth.groupby('unit').get_group(unit)
+    d = rec.df_prec.groupby('unit').get_group(unit)
     x = d.loc[:, 'T'].values * bin_size
     y = d.loc[:, 'fr'].values
 
@@ -367,30 +531,45 @@ def plot_unit(df_psth, rec, bin_size, unit, xlims=(None, None), path=''):
         plt.close(fig)
 
 
-def plot_psth(df, bin_size, df2=None, scores={}, path=''):
+def get_ypred(dfx_bin, dfy_bin, mod, scoring=None):
+    
+    X = dfx_bin.values
 
-    df.loc[:, 'type'] = 'true'
-    df.loc[:, 't'] = df.loc[:, 'bins'] * bin_size
+    # get prediction
+    Y_pred = mod.predict(X)
 
-    if df2 is not None:
-        df2.loc[:, 'type'] = 'predicted'
-        df2.loc[:, 't'] = df2.loc[:, 'bins'] * bin_size
-        df = pd.concat([df, df2], ignore_index=True)
+    # get scores per unit
+    cvs = lambda u: cross_val_score(mod, X, dfy_bin.loc[:, u].values, cv=10, scoring=scoring)
+    unt2score = { u: cvs(u).mean() for u in dfy_bin }
 
-    # TODO apply boxcar filter
+    return Y_pred, unt2score
 
-    nu = len(df.loc[:, 'unit'].unique())
+def plot_mean_response(df_bin, arr_pred=None, scores={}, path=''):
+
+    if arr_pred is not None:
+        df_bin_pred = df_bin.copy()
+        df_bin_pred.loc[:, :] = arr_pred
+
+    nu = len(df_bin.columns)
     nc = 5
     nr = int(np.ceil(nu / nc))
 
-    fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(nu, 2*nr))
+    fig, axmat = plt.subplots(ncols=nc, nrows=nr, figsize=(3*nc, 2*nr), squeeze=False)
 
-    for ax, (u, d) in zip(axmat.flatten(), df.groupby('unit')):
-        sns.lineplot(ax=ax, data=d, x='t', y='dfr', hue='type', legend=False)
+    for ax, u in zip(axmat.flatten(), df_bin.columns):
+
+        df = df_bin.loc[:, u].reset_index()
+        df.loc[:, 'type'] = 'true'
+        if arr_pred is not None:
+            df_pred = df_bin_pred.loc[:, u].reset_index()
+            df_pred.loc[:, 'type'] = 'pred'
+            df = pd.concat([df, df_pred])
+
+        sns.lineplot(ax=ax, data=df, x='bin', y=u, hue='type', errorbar='sd', legend=False)
 
         title = f'unit {u}'
         if scores:
-            title += f' ({scores[u]:1.2f})'
+            title += f' ({scores[u]:1.3f})'
         ax.set_title(title)
         ax.margins(x=0)
         ax.set_xlabel('')
@@ -400,6 +579,10 @@ def plot_psth(df, bin_size, df2=None, scores={}, path=''):
         ax.set_xlabel('time from cue [s]')
     for ax in axmat.T[0]:
         ax.set_ylabel('firing rate [Hz]')
+
+    for ax in axmat.flatten():
+        if not ax.has_data():
+            ax.set_axis_off()
 
     fig.tight_layout()
     if path:
