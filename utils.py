@@ -12,8 +12,9 @@ plt.rcParams['savefig.facecolor'] = 'w'
 sns.set_style("whitegrid")
 
 
-def filter_trial_types(rec, params):
+def filter_trials_thresh(rec, params):
     
+    # filter based on trial type
     l_incl = params['type_incl']
     tt = rec.df_trl.loc[:, 'trial_type']
     
@@ -21,12 +22,27 @@ def filter_trial_types(rec, params):
         # only trials starting with strings defined in l_incl
         l_ds = [ tt.str.startswith(s) for s in l_incl ]
         df = pd.concat(l_ds, axis=1)
-        m = df.any(axis=1)
+        m_tt = df.any(axis=1)
 
     else:
         # all trials
-        m = tt == tt
+        m_tt = tt == tt
+    
+    # filter based on lick time
+    lck_min, lck_max = params['first_lick']
+    
+    lck = rec.df_trl.loc[:, 'dt_lck']
+    m_lck = lck == lck # DataSeries with all True for not nan
 
+    if lck_min is not None:
+        m = lck > lck_min
+        m_lck = m_lck & m
+    
+    if lck_max is not None:
+        m = lck < lck_max
+        m_lck = m_lck & m
+    
+    m = m_tt & m_lck
     trials = { *rec.df_trl.loc[m, 'trial'] }
     
     return trials
@@ -38,10 +54,15 @@ def set_trial_unit_filters(rec, rate_range, sw_range, perc_trial):
     unts_sw = filter_sw(rec.df_unt, *sw_range)
 
     m = rec.df_unt.loc[:, 'unit'].isin(unts_rate & unts_sw)
-    unts_range, trls_range = filter_trials(rec.df_unt.loc[m], thresh=perc_trial, plot=False)
+    if m.any():
+        unts_range, trls_range = filter_trials(rec.df_unt.loc[m], thresh=perc_trial, plot=False)
 
-    rec.units = unts_rate & unts_sw & unts_range
-    rec.trials = trls_range
+        rec.units = unts_rate & unts_sw & unts_range
+        rec.trials = trls_range
+    else:
+        print(f'INFO: 0 units after filtering left for {rec.session}')
+        rec.units = set()
+        rec.trials = set()
 
 
 def bin_spikes(df_spk, df_trl, bin_size):
@@ -98,7 +119,7 @@ def bin_spikes(df_spk, df_trl, bin_size):
 def select_data(rec1, params, rec2=None):
 
     # get trial to include based on trial type
-    trials_incl = filter_trial_types(rec1, params)
+    trials_incl = filter_trials_thresh(rec1, params)
 
     # store filtered units and trials
     set_trial_unit_filters(rec1, 
@@ -107,7 +128,7 @@ def select_data(rec1, params, rec2=None):
                            perc_trial=params['perc_trials'])
     
     # load or calculate binned spikes
-    rec1.path_bin = rec1._path_name('bin{}.hdf'.format(params['bin_size']))
+    rec1.path_bin = rec1._path_tmp / 'bin{}.hdf'.format(params['bin_size'])
     df1 = rec1._assign_df(rec1.path_bin, bin_spikes, {'df_spk': rec1.df_spk, 'df_trl': rec1.df_trl, 'bin_size': params['bin_size']})
     
     if rec2 is not None:
@@ -119,7 +140,7 @@ def select_data(rec1, params, rec2=None):
                             perc_trial=params['perc_trials'])
         
         # load or calculate binned spikes
-        rec2.path_bin = rec2._path_name('bin{}.hdf'.format(params['bin_size']))
+        rec2.path_bin = rec2._path_tmp / 'bin{}.hdf'.format(params['bin_size'])
         df2 = rec2._assign_df(rec2.path_bin, bin_spikes, {'df_spk': rec2.df_spk, 'df_trl': rec2.df_trl, 'bin_size': params['bin_size']})
 
         # select trials common to both
@@ -386,7 +407,10 @@ def filter_trials(df_unt, thresh=0.9, plot=False):
     df = df_unt.loc[ df_unt.loc[:, 'unit'].isin(unts) ]
     trl_min = df.loc[:, 'first_trial'].max()
     trl_max = df.loc[:, 'last_trial'].max()
-    trls = { *range(trl_min, trl_max + 1) }
+    if (trl_min != trl_min) or (trl_max != trl_max):
+        trls = set()
+    else:
+        trls = { *range(trl_min, trl_max + 1) }
 
     return unts, trls
 

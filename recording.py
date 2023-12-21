@@ -10,28 +10,30 @@ plt.rcParams['savefig.facecolor'] = 'w'
 
 class Recording:
 
-    def __init__(self, matlab_file, force_overwrite=False):
+    def __init__(self, matlab_file, tmp_dir='tmp', force_overwrite=False):
 
         self.path_mat = Path(matlab_file)
+        self.force_overwrite = force_overwrite
+
+        # define session name
         self.session = self.path_mat.with_suffix('').name
         
-        # systematic naming of datafiles based on matlab file
-        self._path_name = lambda x : self.path_mat.parent / '{}_{}'.format(self.path_mat.with_suffix('').name, x)
+        # temporary folder, used to recycle precalculated data
+        self._path_tmp = self.path_mat.parent / '{}/{}'.format(tmp_dir, self.session)
+        self._path_tmp.mkdir(exist_ok=True, parents=True)
 
-        self.force_overwrite = force_overwrite
-  
         # load trial info
-        self.path_trl = self._path_name('trl.parquet')
+        self.path_trl = self._path_tmp / 'trl.parquet'
         self.df_trl = self._assign_df(self.path_trl, self._load_trial_info)
         self.trials = { *self.df_trl.loc[:, 'trial'] }
 
         # load unit info
-        self.path_unt = self._path_name('unt.parquet')
+        self.path_unt = self._path_tmp / 'unt.parquet'
         self.df_unt = self._assign_df(self.path_unt, self._load_unit_info)
         self.units = { *self.df_unt.loc[:, 'unit'] }
 
         # load spike times
-        self.path_spk = self._path_name('spk.parquet')
+        self.path_spk = self._path_tmp / 'spk.parquet'
         self.df_spk = self._assign_df(self.path_spk, self._load_spike_times)
 
 
