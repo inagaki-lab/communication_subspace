@@ -2,13 +2,13 @@ import pandas as pd
 import numpy as np
 from scipy.ndimage import  gaussian_filter1d
 
-from recording import Recording
+from src.recording import Recording
 
 from sklearn.model_selection import GridSearchCV, cross_val_score
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
-from custom_models import RRRegressor
+from src.custom_models import RRRegressor
 
 import matplotlib.pylab as plt
 import seaborn as sns
