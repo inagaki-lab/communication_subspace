@@ -21,7 +21,11 @@ import numpy as np
 from pathlib import Path
 
 from src.recording import Recording
-from src import utils as utl
+from src import (
+    recording_operations as rec_ops,
+    visualization as vis,
+    regression_models as reg,
+)
 
 # %% [markdown]
 # # User settings
@@ -164,15 +168,16 @@ rec1 = Recording(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_imec0_JRC
 
 # %%
 # select units and trials, and bin data
-dfx_bin, dfy_bin = utl.select_data(rec1, rec2=rec2, params=params)
+X, Y = rec_ops.select_data(rec1, rec2=rec2, params=params)
 
 # subtract baseline
-dfx_bin0 = utl.subtract_baseline(dfx_bin, rec1.df_spk)
-dfy_bin0 = utl.subtract_baseline(dfy_bin, rec1.df_spk if rec2 is None else rec2.df_spk)
+if params['subtract_baseline']:
+    X = rec_ops.subtract_baseline(X, rec1.df_spk)
+    Y = rec_ops.subtract_baseline(Y, rec1.df_spk if rec2 is None else rec2.df_spk)
 
 # optional: filter some epoch
-dfx_bin0_epo = utl.select_epoch(dfx_bin0, epochs['pre_lick'], rec1.df_trl)
-dfy_bin0_epo = utl.select_epoch(dfy_bin0, epochs['pre_lick'], rec1.df_trl if rec2 is None else rec2.df_trl)
+X = rec_ops.select_epoch(X, epochs['pre_lick'], rec1.df_trl)
+Y = rec_ops.select_epoch(Y, epochs['pre_lick'], rec1.df_trl if rec2 is None else rec2.df_trl)
 
 # %% [markdown]
 # # Model fitting
@@ -201,16 +206,16 @@ dfy_bin0_epo = utl.select_epoch(dfy_bin0, epochs['pre_lick'], rec1.df_trl if rec
 
 # %%
 # linear regression (= ridge with alpha=0)
-lin_mods = utl.ridge_regression(dfx_bin0, dfy_bin0, scoring=params['scoring'], alphas=[0])
+lin_mods = reg.ridge_regression(X, Y, scoring=params['scoring'], alphas=[0])
 lin_mod = lin_mods.best_estimator_
 
 # ridge
-ridge_mods = utl.ridge_regression(dfx_bin0, dfy_bin0, scoring=params['scoring'], alphas=np.logspace(-13, 13, 27))
+ridge_mods = reg.ridge_regression(X, Y, scoring=params['scoring'], alphas=np.logspace(-13, 13, 27))
 ridge_mod = ridge_mods.best_estimator_
-utl.plot_gridsearch(ridge_mods, 'ridge', other_mods={'linear': lin_mods}, logscale=True)
+vis.plot_gridsearch(ridge_mods, 'ridge', other_mods={'linear': lin_mods}, logscale=True)
 
 # %%
 # RRR
-rr_mods = utl.reduced_rank_regression(dfx_bin0, dfy_bin0, scoring=params['scoring'])
+rr_mods = reg.reduced_rank_regression(X, Y, scoring=params['scoring'])
 rr_mod = rr_mods.best_estimator_
-utl.plot_gridsearch(rr_mods, 'reduced rank', other_mods={'linear': lin_mods, 'ridge': ridge_mods}, logscale=False)
+vis.plot_gridsearch(rr_mods, 'reduced rank', other_mods={'linear': lin_mods, 'ridge': ridge_mods}, logscale=False)
