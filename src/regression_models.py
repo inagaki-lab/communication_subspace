@@ -112,12 +112,37 @@ class RRRegressor(BaseEstimator, RegressorMixin):
         return Y
     
 
-def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None):
+def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None, n_cv=10, n_jobs=-1):
+    '''Ridge regression with cross-validation.
+
+    Return a GridSearchCV object with the fitted models, where
+    the best model can be accessed with mods.best_estimator_.
+
+    Parameters
+    ----------
+    dfx_bin : pandas.DataFrame
+        Data for the predictor variables
+    dfy_bin : pandas.DataFrame
+        Data for the target variables
+    alphas : array-like of float
+        Regularization parameters to test
+    scoring : str or None, optional
+        Overwrite score for CV evaluation, by default None
+    n_cv : int, optional
+        Number of cross-validation folds, by default 10
+    n_jobs : int, optional
+        Number of jobs to run in parallel.
+        If -1, use all available processors, by default -1
+
+    Returns
+    -------
+    mods : GridSearchCV
+        GridSearchCV object with the fitted models
+    '''
     
     X, Y = dfx_bin.values, dfy_bin.values
 
     pipe = Pipeline(steps=[
-        # ('scaler', StandardScaler()),
         ('mod', Ridge())
     ])
 
@@ -125,8 +150,8 @@ def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None):
         pipe, 
         { 'mod__alpha': alphas, },
         scoring=scoring,
-        cv=10,
-        n_jobs=-1,
+        cv=n_cv,
+        n_jobs=n_jobs,
     )
 
     mods = grd.fit(X, Y)
@@ -134,7 +159,34 @@ def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None):
     return mods
 
 
-def reduced_rank_regression(dfx_bin, dfy_bin, max_rank=None, scoring=None):
+def reduced_rank_regression(dfx_bin, dfy_bin, max_rank=None, scoring=None, n_cv=10, n_jobs=-1):
+    '''Reduced rank regression with cross-validation.
+
+    Return a GridSearchCV object with the fitted models, where
+    the best model can be accessed with mods.best_estimator_.
+
+    Parameters
+    ----------
+    dfx_bin : pandas.DataFrame
+        Data for the predictor variables
+    dfy_bin : pandas.DataFrame
+        Data for the target variables
+    max_rank : int or None, optional
+        Fit models with ranks up to this value.
+        If None, deduce max rank from the number of target variables, by default None.
+    scoring : str or None, optional
+        Overwrite score for CV evaluation, by default None
+    n_cv : int, optional
+        Number of cross-validation folds, by default 10
+    n_jobs : int, optional
+        Number of jobs to run in parallel.
+        If -1, use all available processors, by default -1
+
+    Returns
+    -------
+    mods : GridSearchCV
+        GridSearchCV object with the fitted models
+    '''
 
     X, Y = dfx_bin.values, dfy_bin.values
 
@@ -143,7 +195,6 @@ def reduced_rank_regression(dfx_bin, dfy_bin, max_rank=None, scoring=None):
     r = np.arange(max_rank) + 1
 
     pipe = Pipeline(steps=[
-        # ('scaler', StandardScaler()), 
         ('mod', RRRegressor())
     ])
 
@@ -151,8 +202,8 @@ def reduced_rank_regression(dfx_bin, dfy_bin, max_rank=None, scoring=None):
         pipe, 
         { 'mod__r': r, },
         scoring=scoring,
-        cv=10,
-        n_jobs=-1,
+        cv=n_cv,
+        n_jobs=n_jobs,
     )
 
     mods = grd.fit(X, Y)
@@ -161,13 +212,48 @@ def reduced_rank_regression(dfx_bin, dfy_bin, max_rank=None, scoring=None):
 
 
 def save_cv_results(mods, path):
+    '''Save grid search results to disk.
+
+    Parameters
+    ----------
+    mods : GridSearchCV
+        GridSearchCV object with the fitted models
+    path : path-like
+        Path to save the results
+    '''
     
     df = pd.DataFrame(mods.cv_results_)
     
     df.to_parquet(path)
 
 
-def get_ypred(dfx_bin, dfy_bin, mod, scoring=None):
+def get_ypred(dfx_bin, dfy_bin, mod, scoring=None, n_cv=10):
+    '''Predict activity using source activity `dfx_bin` and fitted model `mod`.
+
+    Returns predicted activity and cross-validation scores per unit.
+
+    `dfy_bin` is necessary for the cross-validation scores.
+
+    Parameters
+    ----------
+    dfx_bin : pandas.DataFrame
+        Data for the predictor variables
+    dfy_bin : pandas.DataFrame
+        Data for the target variables
+    mod : GridSearchCV
+        GridSearchCV object with the fitted models
+    scoring : str or None, optional
+        Overwrite score for CV evaluation, by default None
+    n_cv : int, optional
+        Number of cross-validation folds, by default 10
+
+    Returns
+    -------
+    Y_pred : numpy.ndarray
+        Predicted activity, same shape as `dfy_bin.values`
+    unt2score : dict
+        Dictionary with cross-validation scores per unit in `dfy_bin`
+    '''
     
     X = dfx_bin.values
 
@@ -175,7 +261,7 @@ def get_ypred(dfx_bin, dfy_bin, mod, scoring=None):
     Y_pred = mod.predict(X)
 
     # get scores per unit
-    cvs = lambda u: cross_val_score(mod, X, dfy_bin.loc[:, u].values, cv=10, scoring=scoring)
+    cvs = lambda u: cross_val_score(mod, X, dfy_bin.loc[:, u].values, cv=n_cv, scoring=scoring)
     unt2score = { u: cvs(u).mean() for u in dfy_bin }
 
     return Y_pred, unt2score
