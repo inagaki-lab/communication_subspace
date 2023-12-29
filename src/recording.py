@@ -30,7 +30,7 @@ class Recording:
     are loaded from disk if they exist and `force_overwrite` is False.
     '''
 
-    def __init__(self, matlab_file, tmp_dir='tmp', force_overwrite=False):
+    def __init__(self, matlab_file, tmp_dir='tmp_data', force_overwrite=False):
         '''Load data from matlab file and store in pandas.DataFrames
 
         Parameters

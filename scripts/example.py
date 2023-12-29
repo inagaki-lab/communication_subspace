@@ -74,7 +74,7 @@ from src import (
 
 # %%
 params = {
-    'bin_size'        : 0.2,
+    'bin_size': 0.2,
     'rate_src': (1, None), 
     'rate_trg': (1, None),
     'spike_width_src': (None, None), 
@@ -138,7 +138,7 @@ trial_groups = {
 # - `rec.df_spk`: spike times
 #
 # The `Recording` class saves intermediate resutls in a temporary folder,
-# which is `somefolder/tmp` by default. This can be controlled via the `tmp_dir` argument.
+# which is `somefolder/tmp_data` by default. This can be controlled via the `tmp_dir` argument.
 # The intermediate results are reused when the same data is loaded again.
 # To recalculate the intermediate results, either delete the temporary folder or set `force_overwrite=True`.
 
