@@ -12,94 +12,193 @@ from sklearn.pipeline import Pipeline
 
 
 class RRRegressor(BaseEstimator, RegressorMixin):
+    '''Reduced-rank regression model.
 
-    def __init__(self, fit_intercept=True, r=2):
+    Reduced-rank regression is a linear regression model with a 
+    low-rank constraint on the weight matrix.
+    
+    The general steps are:
+    1. Fit least-squares model to feature matrix X and target matrix Y:
+    X @ Bls = Y
+    2. Predict target matrix Yls from X using least-squares weights:
+    Yls = X @ Bls
+    3. Calculate PCA components of Yls:
+    V = PCA(Yls)
+    4. Choose first r PCs and constrain Bls to have rank r:
+    Vr = V[:, :r]
+    Br = Bls @ Vr @ Vr.T
 
-        self.fit_intercept = fit_intercept
-        self.r = r
-        # self.is_precal_ = False
-        # if (X_pre is not None) and (Y_pre is not None):
-        #     self._precalc(X_pre, Y_pre)
+    This is a scikit-learn reimplementation of matlab code from
+    https://github.com/joao-semedo/communication-subspace/tree/master
+
+
+    Attributes
+    ----------
+    coef_ : ndarray of shape (n_features,) or (n_targets, n_features)
+        Weight vector(s).
+    intercept_ : float or ndarray of shape (n_targets,)
+        Independent term in decision function. Set to 0.0 if
+        ``fit_intercept = False``.
+    n_features_in_ : int
+        Number of features seen during `fit`
+    V : ndarray
+
+    Bls : ndarray
+
+    Methods
+    -------
+    fit(X, Y):
+        Fit the model to data matrix X and target(s) Y.
+    predict(X):
+        Predict based on X using the fitted model.
+    '''
+
+    def __init__(self, fit_intercept=True, rank=2):
+        '''
+        Parameters
+        ----------
+        fit_intercept : bool, optional
+            If true, include additional bias feature, by default True
+        rank : int, optional
+            Rank to use for the reduced rank regression, by default 2
+        '''
+        self._fit_intercept = fit_intercept
+        self._rank = rank
             
 
     def _lstsq_prediction(self, X, Y):
+        '''Least-squares prediction of Y from X.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            N x p feature array
+        Y : numpy.ndarray
+            N x q target array
+
+        Returns
+        -------
+        Yls : numpy.ndarray
+            N x q predicted target array
+        B : numpy.ndarray
+            p x q weight matrix
+        '''
 
         # least-squares solution
         res = np.linalg.lstsq(X, Y, rcond=None) # lstsq(a, b) solves a * x = b
-        B = res[0]
-        Y_p = X @ B # predict targets 
+        Bls = res[0]
+        Yls = X @ Bls # predict targets 
 
-        return Y_p, B
+        return Yls, Bls
     
     def _get_pca_components(self, X):
+        '''PCA components for X.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            N x p feature array
+
+        Returns
+        -------
+        V : numpy.ndarray
+            p x p matrix with PCA components as columns
+        '''
         'calulate PCA components (columns of matrix V) for X (rows: observations, cols: variables)'
 
-        # PCA (alternatives: sklearn.decomposition.PCA or np.linalg.svd)
-
         C = np.cov(X, rowvar=False)           # covariance matrix
-        val, vec = np.linalg.eigh(C.T)         # diagonalize
+        val, vec = np.linalg.eigh(C.T)        # diagonalize
         V = vec[:, np.argsort(val)[::-1]]     # ensure descending components
 
-        # from sklearn.decomposition import PCA
-        # pca = PCA()
-        # pca.fit(Yf)
-        # V = pca.components_
-
-        # U, S, V = np.linalg.svd(Yf)
-
-        # V = loadmat('./communication-subspace-master/V.mat', squeeze_me=True)['V']
+        # PCA alternatives: sklearn.decomposition.PCA or np.linalg.svd
 
         return V
     
     def _add_bias(self, X):
+        '''Add bias column to X.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            N x p feature array
+
+        Returns
+        -------
+        X_bias : numpy.ndarray
+            N x (p+1) feature array with bias column
+        '''
         'add bias (ones) to an N x p feature array'
 
         bias = np.ones_like(X[:, :1])
-        Z = np.concatenate([bias, X], axis=1)
+        X_bias = np.concatenate([bias, X], axis=1)
 
-        return Z
+        return X_bias
 
-    def _precalc(self, X, Y):
-
-        # least-squares solution            
-        Yls, self.Bls = self._lstsq_prediction(X, Y)
-        
-        # PCA
-        self.V = self._get_pca_components(Yls)
-
-        self.is_precal_ = True
-
-
+  
     def fit(self, X, Y):
+        '''Fit reduced-rank regression model.
 
+        Parameters
+        ----------
+        X : numpy.ndarray
+            N x p feature array
+        Y : numpy.ndarray
+            N x q target array
+
+        Returns
+        -------
+        self : object
+            Fitted estimator.
+
+        Raises
+        ------
+        ValueError
+            If requested rank is larger than maximum possible rank.
+        '''
         # checks
         X, Y = check_X_y(X, Y, multi_output=True)
         self.n_features_in_ = X.shape[1]
 
-        self.max_rank = Y.shape[1]
-        if self.r > self.max_rank:
-            raise ValueError(f'requested rank {self.r} is larger than maximum possible rank {self.max_rank}')
+        self._max_rank = Y.shape[1]
+        if self._rank > self._max_rank:
+            raise ValueError(f'requested rank {self._rank} is larger than maximum possible rank {self._max_rank}')
 
         # add bias feature
-        if self.fit_intercept:
+        if self._fit_intercept:
             X = self._add_bias(X)
 
         # get V and Bls
-        self._precalc(X, Y)
+        Yls, self.Bls = self._lstsq_prediction(X, Y)
+        self.V = self._get_pca_components(Yls)
 
-        # do reducted rank regression
-        Vr = self.V[:, :self.r]          # first r principle components
-        Br = self.Bls @ Vr @ Vr.T        # enforcing low rank on B_ls
+        # do reduced rank regression
+        Vr = self.V[:, :self._rank]     # first r principle components
+        Br = self.Bls @ Vr @ Vr.T       # enforcing low rank on B_ls
 
         # store results
-        self.intercept_ = Br[0, :]
-        self.coef_ = Br[1:, :]
-        self.is_fitted_ = True
+        if self._fit_intercept:
+            self.intercept_ = Br[0, :]
+            self.coef_ = Br[1:, :]
+        else:
+            self.intercept_ = 0.0
+            self.coef_ = Br
 
         return self
     
     
     def predict(self, X):
+        '''Predict based on X using the fitted model.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            N x p feature array
+
+        Returns
+        -------
+        Y_pred : numpy.ndarray
+            N x q predicted target array
+        '''
         check_is_fitted(self)
         X = check_array(X)
 
@@ -107,9 +206,9 @@ class RRRegressor(BaseEstimator, RegressorMixin):
             X = self._add_bias(X)
         
         B_r = np.concatenate([np.expand_dims(self.intercept_, axis=0), self.coef_], axis=0)
-        Y = X @ B_r
+        Y_pred = X @ B_r
 
-        return Y
+        return Y_pred
     
 
 def ridge_regression(dfx_bin, dfy_bin, alphas, scoring=None, n_cv=10, n_jobs=-1):
@@ -200,7 +299,7 @@ def reduced_rank_regression(dfx_bin, dfy_bin, max_rank=None, scoring=None, n_cv=
 
     grd = GridSearchCV(
         pipe, 
-        { 'mod__r': r, },
+        { 'mod__rank': r, },
         scoring=scoring,
         cv=n_cv,
         n_jobs=n_jobs,
