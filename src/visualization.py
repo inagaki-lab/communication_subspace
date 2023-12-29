@@ -7,7 +7,7 @@ plt.rcParams['savefig.facecolor'] = 'w'
 sns.set_style("whitegrid")
 
 def plot_rate_dist(X, Y, path=''):
-    # plot rate distributions
+    'plot rate distributions for two populations'
 
     fig, ax = plt.subplots()
 
@@ -26,8 +26,8 @@ def plot_rate_dist(X, Y, path=''):
         plt.close(fig)
 
 def plot_gridsearch(mods, param, other_mods=dict(), logscale=True, path=''):
+    'Plot hyperparameter search results and compare to other (best) models'
 
-    # plot ridge
     df = pd.DataFrame(mods.cv_results_)
     ncv = len([c for c in df.columns if c.startswith('split')])
     x = [ np.array(*i.values()).item() for i in df.loc[:, 'params'] ]
@@ -62,7 +62,6 @@ def plot_gridsearch(mods, param, other_mods=dict(), logscale=True, path=''):
         plt.close(fig)
 
 def plot_missing(df_psth, bin_size, vmax=None, path=''):
-
 
     df = pd.pivot_table(data=df_psth, values='fr', index='unit', columns='T')
     # df = df.apply(lambda x: x / np.mean(x), axis=1)
@@ -124,6 +123,7 @@ def plot_unit(rec, bin_size, unit, xlims=(None, None), path=''):
         plt.close(fig)
 
 def plot_mean_response(df_bin, arr_pred=None, scores={}, path=''):
+    'Plot PSTH for all units in `df_bin` and optionally add predictions in `arr_pred`'
 
     if arr_pred is not None:
         df_bin_pred = df_bin.copy()
