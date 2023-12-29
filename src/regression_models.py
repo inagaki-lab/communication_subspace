@@ -41,9 +41,14 @@ class RRRegressor(BaseEstimator, RegressorMixin):
         ``fit_intercept = False``.
     n_features_in_ : int
         Number of features seen during `fit`
+    rank : int
+        Rank of the reduced-rank regression model
+    fit_intercept : bool
+        Indicates whether a bias feature was added to the data
     V : ndarray
-
+        PCA components of Yls (least-squares prediction of Y from X)
     Bls : ndarray
+        Weights of least-squares model (X @ Bls = Yls)
 
     Methods
     -------
@@ -62,8 +67,8 @@ class RRRegressor(BaseEstimator, RegressorMixin):
         rank : int, optional
             Rank to use for the reduced rank regression, by default 2
         '''
-        self._fit_intercept = fit_intercept
-        self._rank = rank
+        self.fit_intercept = fit_intercept
+        self.rank = rank
             
 
     def _lstsq_prediction(self, X, Y):
@@ -160,11 +165,11 @@ class RRRegressor(BaseEstimator, RegressorMixin):
         self.n_features_in_ = X.shape[1]
 
         self._max_rank = Y.shape[1]
-        if self._rank > self._max_rank:
-            raise ValueError(f'requested rank {self._rank} is larger than maximum possible rank {self._max_rank}')
+        if self.rank > self._max_rank:
+            raise ValueError(f'requested rank {self.rank} is larger than maximum possible rank {self._max_rank}')
 
         # add bias feature
-        if self._fit_intercept:
+        if self.fit_intercept:
             X = self._add_bias(X)
 
         # get V and Bls
@@ -172,11 +177,11 @@ class RRRegressor(BaseEstimator, RegressorMixin):
         self.V = self._get_pca_components(Yls)
 
         # do reduced rank regression
-        Vr = self.V[:, :self._rank]     # first r principle components
+        Vr = self.V[:, :self.rank]     # first r principle components
         Br = self.Bls @ Vr @ Vr.T       # enforcing low rank on B_ls
 
         # store results
-        if self._fit_intercept:
+        if self.fit_intercept:
             self.intercept_ = Br[0, :]
             self.coef_ = Br[1:, :]
         else:
