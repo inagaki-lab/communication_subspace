@@ -133,9 +133,10 @@ bh.analyze_interactions(p_dirs, params, epochs, probe_names, out_dir='analysis/s
 # We can easily run the analysis with different parameters and 
 # save the results in different folders.
 #
-# Here, we load two distinct parameter sets from a YML file, 
-# which differ in the `subtract_baseline` parameter.
+# Here, we load two parameter sets that we defined in the file `batch_parameter_sets.yml`.
 # Note that the syntax in the YML file is slightly different from the python syntax.
+# The two sets only differ in the `subtract_baseline` parameter, therefore,
+# we can investigate the effect of baseline subtraction by comparing the results.
 
 # %%
 # load parameter sets
