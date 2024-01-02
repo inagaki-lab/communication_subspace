@@ -66,6 +66,9 @@ from src import (
 # - `subtract_baseline : bool`\
 # whether or not to subtract baseline.
 # This subtracts the average firing rate during pre cue period per trial
+# - `min_units_src : int`\
+# Minimum number of units in source population.
+# This will skip the analysis in batch mode.
 #
 # Note that when defining intervals `(float, float)`, set one of the values to `None`
 # for no upper/lower limit.
@@ -83,7 +86,8 @@ params = {
     'first_lick' : (None, None),
     'type_incl': [ 'l_n', ],
     'scoring': 'r2',
-    'subtract_baseline': True
+    'subtract_baseline': True,
+    'min_units_src': 5,
 }
 
 # %% [markdown]
@@ -173,6 +177,10 @@ vis.plot_trial_infos(rec1.df_trl)
 # %%
 # select units and trials, and bin data
 X, Y = rec_ops.select_data(rec1, rec2=rec2, params=params)
+
+# check if enough units are left is source recording (will skipp calculation in batch mode)
+if len(rec1.units) < params['min_units_src']:
+    print('WARNING: Too few units in source recording!')
 
 # subtract baseline
 if params['subtract_baseline']:

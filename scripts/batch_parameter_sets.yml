@@ -9,6 +9,7 @@ params_1:
     perc_trials: 0.9
     scoring: r2
     subtract_baseline: True
+    min_units_src: 5
 params_2:
     bin_size: 0.2
     spike_width_src: [null, null]
@@ -20,3 +21,4 @@ params_2:
     perc_trials: 0.9
     scoring: r2
     subtract_baseline: False
+    min_units_src: 5
