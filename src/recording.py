@@ -9,8 +9,41 @@ import matplotlib.pylab as plt
 plt.rcParams['savefig.facecolor'] = 'w'
 
 class Recording:
+    '''Class to load data for a single recording stored in a matlab file
 
-    def __init__(self, matlab_file, tmp_dir='tmp', force_overwrite=False):
+    Attributes
+    ----------
+    df_trl : pandas.DataFrame 
+        Trial info, see self._load_trial_info
+    df_unt : pandas.DataFrame 
+        unit info, see self._load_unit_info
+    df_spk : pandas.DataFrame 
+        spike times, see self._load_spike_times
+    trials : set of int
+        indices for available trials (1-based)
+    units : set of int
+        indices for ailable unit/neuron (1-based)
+
+    Notes
+    -----
+    The pandas.DataFrames are stored in the temporary folder `tmp_dir` and
+    are loaded from disk if they exist and `force_overwrite` is False.
+    '''
+
+    def __init__(self, matlab_file, tmp_dir='tmp_data', force_overwrite=False):
+        '''Load data from matlab file and store in pandas.DataFrames
+
+        Parameters
+        ----------
+        matlab_file : path-like
+            Path to matlab data file
+        tmp_dir : path-like, optional
+            Name of the folder to store processed data, by default 'tmp'
+            Folder is created in the same folder as `matlab_file` and a subfolder
+            with the name of the session is created inside `tmp_dir`.
+        force_overwrite : bool, optional
+            If True, do not load data from `tmp_dir`, by default False
+        '''
 
         self.path_mat = Path(matlab_file)
         self.force_overwrite = force_overwrite
@@ -37,7 +70,30 @@ class Recording:
         self.df_spk = self._assign_df(self.path_spk, self._load_spike_times)
 
 
-    def _assign_df(self, path, function, kw=dict()):
+    def _assign_df(self, path, function, function_args=dict()):
+        '''Load data from `path` if it exists, otherwise run `function` and save to `path`.
+
+        Can handle storing and loading pandas.DataFrame in `.parquet` and `.hdf` format.
+
+        Parameters
+        ----------
+        path : path-like
+            Path to file to load or save. Must have a known extension.
+        function : callable
+            Function to run if `path` does not exist. Must return a pandas.DataFrame
+        function_args : dict, optional
+            Additional arguments to pass to `function`, by default dict()
+
+        Returns
+        -------
+        df : pandas.DataFrame
+            Data loaded from `path` or returned by `function`
+
+        Raises
+        ------
+        NotImplementedError
+            If `path` does not have a known extension
+        '''
 
         if path.suffix == '.parquet':
             read = lambda path: pd.read_parquet(path)
@@ -53,13 +109,14 @@ class Recording:
         if path.is_file() and not self.force_overwrite:
             df = read(path)
         else:
-            df = function(**kw)
+            df = function(**function_args)
             write(df, path)
 
         return df
 
 
     def _load_matlab(self):
+        '''Load and return matlab file with `scipy.io.loadmat`, if not already loaded'''
         
         try: # check if matlab file has been loaded
             self._matlab
@@ -70,6 +127,19 @@ class Recording:
 
 
     def _get_trial_range(self):
+        '''Define available trial range
+         
+        Based on Trial_info.Trial_range_to_analyze in matlab file
+
+        Currently, the trial range is limited to 1020 trials.
+
+        Returns
+        -------
+        trl_min : int
+            Index for first available trial
+        trl_max : int
+            Index for last available trial
+        '''
 
         m = self._load_matlab()
 
@@ -87,6 +157,29 @@ class Recording:
 
 
     def _load_trial_info(self, dt=2):
+        '''Load trial info from matlab file
+
+        For each trial, the following information is stored:
+        - `trial` : trial index
+        - `t_pre`, `t_cue`, `t_lck` : time of pre-sample, cue and first lick
+        in seconds relative to trigger onset
+        -  `dt_pre`, `dt_cue`, `dt_lck` : time of pre-sample, cue and first lick
+        in seconds relative to cue onset
+        - `dt0`, `dtf` : trial start and end time in seconds relative to cue onset
+        - `trial_type` : trial type as defined in `Behavior.stim_type_name` in matlab file
+        - `response` : response type as defined in `Behavior.Trial_types_of_response` in matlab file
+        - `response_id` : response type as defined in `Behavior.Trial_types_of_response_vector` in matlab file
+
+        Parameters
+        ----------
+        dt : float, optional
+            Time in seconds before cue and after first lick, by default 2
+
+        Returns
+        -------
+        df : pandas.DataFrame
+            Trial info
+        '''
 
         m = self._load_matlab()
         beh = vars(vars(m['unit'][0])['Behavior'])
@@ -130,6 +223,19 @@ class Recording:
 
 
     def _load_unit_info(self):
+        '''Load unit info from matlab file
+
+        For each unit, the following information is stored:
+        - `unit` : unit index (1-based, as in matlab file)
+        - `spike_width` : spike width in ms
+        - `first_trial`, `last_trial` : first and last available trial
+        as defined in `unit.Trial_info.Trial_range_to_analyze` in matlab file
+
+        Returns
+        -------
+        df : pandas.DataFrame
+            Unit info
+        '''
         
         m = self._load_matlab()
 
@@ -154,6 +260,24 @@ class Recording:
         
 
     def _load_spike_times(self):
+        '''Load spike times from matlab file
+
+        Each row is a spike event with the following information:
+        - `t` : spike time in seconds relative to cue onset
+        - `unit` : unit index (1-based)
+        - `trial` : trial index (1-based)
+
+        Spike times are filtered based on `dt0` and `dtf` for each trial.
+        If either `dt0` or `dtf` is nan, all spikes are disregarded.
+
+        Only trials between `first_trial` and `last_trial` 
+        as defined in `self.df_unt` are considered.
+
+        Returns
+        -------
+        df : pandas.DataFrame
+            Spike times in long format
+        '''
         
         m = self._load_matlab()
         

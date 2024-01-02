@@ -1,0 +1,22 @@
+params_1:
+    bin_size: 0.2
+    spike_width_src: [null, null]
+    spike_width_trg: [.5, null]
+    first_lick: [null, null]
+    type_incl: [ 'l_n', ]
+    rate_src: [1, null]
+    rate_trg: [1, null]
+    perc_trials: 0.9
+    scoring: r2
+    subtract_baseline: True
+params_2:
+    bin_size: 0.2
+    spike_width_src: [null, null]
+    spike_width_trg: [.5, null]
+    first_lick: [null, null]
+    type_incl: [ l_n, ]
+    rate_src: [1, null]
+    rate_trg: [1, null]
+    perc_trials: 0.9
+    scoring: r2
+    subtract_baseline: False
