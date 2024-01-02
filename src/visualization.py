@@ -171,7 +171,7 @@ def plot_mean_response(df_bin, arr_pred=None, scores={}, path=''):
 def _barplot_wrapper(df, col, ax):
 
     # plot trial type counts
-    sns.countplot(data=df, y=col, ax=ax, stat='percent')
+    sns.histplot(data=df, y=col, ax=ax, stat='percent', multiple='stack', shrink=.8)
 
     # absolute and relative counts as labels
     c = ax.containers[0]
@@ -187,14 +187,14 @@ def _barplot_wrapper(df, col, ax):
 def plot_trial_infos(df_trl, path=''):
     'Plot trial type, response, and lick time distributions'
 
-    # plot 
-    fig, axarr = plt.subplots(figsize=(6, 9), nrows=3)
     df = df_trl.copy()
+    df.loc[:, 'short'] = df.loc[:, 'trial_type'].str.split('_').str[:2].str.join('_')
+
+    # plot
+    fig, axarr = plt.subplots(figsize=(6, 9), nrows=3)
 
     ax = axarr[0]
     ax.set_title('trial type distribution')
-
-    df.loc[:, 'short'] = df.loc[:, 'trial_type'].str.split('_').str[:2].str.join('_')
     _barplot_wrapper(df, 'short', ax)
     ax.set_ylabel('Trial type')
 
