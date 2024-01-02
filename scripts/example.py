@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.16.0
+#       jupytext_version: 1.11.2
 #   kernelspec:
 #     display_name: comm_sub
 #     language: python
@@ -149,6 +149,10 @@ data_root = Path(r'C:\temp\dual_ephys')
 rec2 = Recording(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_JRC_units.mat')
 rec1 = Recording(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_imec0_JRC_units.mat')
 
+# %%
+# display trial information
+vis.plot_trial_infos(rec1.df_trl)
+
 # %% [markdown]
 # ## Selecting data
 #
@@ -198,11 +202,9 @@ Y = rec_ops.select_epoch(Y, epochs['pre_lick'], rec1.df_trl if rec2 is None else
 # and the score of the linear model in orange.
 # Error bars are the standard deviation of the cross-validation scores.
 #
-# ## Reduced-rank regression
-# In reduced-rank regression, TODO explanation
-#
-# `plot_gridsearch` now compares the linear model and the ridge regression with all 
-# ranks of the reduced-rank regression.
+# We can investigate how well the regression model predicts the activity of individual target neurons
+# by first calculating the predictions with the `get_ypred` and then plotting the actual and predicted activity
+# using the `plot_mean_response` function.
 
 # %%
 # linear regression (= ridge with alpha=0)
@@ -213,6 +215,20 @@ lin_mod = lin_mods.best_estimator_
 ridge_mods = reg.ridge_regression(X, Y, scoring=params['scoring'], alphas=np.logspace(-13, 13, 27))
 ridge_mod = ridge_mods.best_estimator_
 vis.plot_gridsearch(ridge_mods, 'ridge', other_mods={'linear': lin_mods}, logscale=True)
+
+# %%
+# calculate and plot predictions
+Y_pred, scores = reg.get_ypred(X, Y, ridge_mod, scoring=params['scoring'])
+vis.plot_mean_response(Y, Y_pred, scores)
+
+# %% [markdown]
+# ## Reduced-rank regression
+# In reduced-rank regression,
+# we first calculate the least-squares solution and then project the weight matrix onto 
+# the first `rank` principal components. For more details, see `src.regression_models.RRRegressor`.
+#
+# `plot_gridsearch` now compares the linear model and the ridge regression with all 
+# ranks of the reduced-rank regression.
 
 # %%
 # RRR

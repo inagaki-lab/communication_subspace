@@ -144,6 +144,10 @@ def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), out_
             print(f'WARNING: no probe name found for {p_matA.name} or {p_matB.name}')
             print(f'         using {regionA} and {regionB} instead')
 
+        # general info
+        vis.plot_trial_infos(recA.df_trl, path=p_dir / f'{out_dir}/trial_infos_{regionA}.png')
+        vis.plot_trial_infos(recB.df_trl, path=p_dir / f'{out_dir}/trial_infos_{regionB}.png')
+
         # regionA -> regionB
         p_out = p_dir / f'{out_dir}/{regionA}_{regionB}'
         processing_wrapper(p_out, params, epochs, recA, recB)

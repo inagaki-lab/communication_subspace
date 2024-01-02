@@ -167,3 +167,48 @@ def plot_mean_response(df_bin, arr_pred=None, scores={}, path=''):
     if path:
         fig.savefig(path)
         plt.close(fig)
+
+def _barplot_wrapper(df, col, ax):
+
+    # plot trial type counts
+    sns.countplot(data=df, y=col, ax=ax, stat='percent')
+
+    # absolute and relative counts as labels
+    c = ax.containers[0]
+    c_rel = c.datavalues
+    c_abs = c_rel * len(df) / 100
+    l = [ f' {int(i):d} ({j:1.1f} %)' for i, j in zip(c_abs, c_rel) ]
+    ax.bar_label(c, labels=l)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel('Percentage of trials')
+
+    return ax
+
+def plot_trial_infos(df_trl, path=''):
+    'Plot trial type, response, and lick time distributions'
+
+    # plot 
+    fig, axarr = plt.subplots(figsize=(6, 9), nrows=3)
+    df = df_trl.copy()
+
+    ax = axarr[0]
+    ax.set_title('trial type distribution')
+
+    df.loc[:, 'short'] = df.loc[:, 'trial_type'].str.split('_').str[:2].str.join('_')
+    _barplot_wrapper(df, 'short', ax)
+    ax.set_ylabel('Trial type')
+
+    ax = axarr[1]
+    ax.set_title('trial response distribution')
+    _barplot_wrapper(df, 'response', ax)
+    ax.set_ylabel('Trial response')
+
+    ax = axarr[2]
+    ax.set_title('lick time distribution')
+    sns.histplot(data=df, x='dt_lck', hue='response', ax=ax, multiple='layer', binwidth=.2)
+    ax.set_xlabel('lick time relative to cue (s)')
+
+    fig.tight_layout()
+    if path:
+        fig.savefig(path)
+        plt.close(fig)
