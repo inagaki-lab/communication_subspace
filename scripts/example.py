@@ -69,6 +69,8 @@ from src import (
 # - `min_units_src : int`\
 # Minimum number of units in source population.
 # This will skip the analysis in batch mode.
+# - `lick_groups: list of float`\
+# Define intervals of lick times in seconds relative to cue for trial classification.
 #
 # Note that when defining intervals `(float, float)`, set one of the values to `None`
 # for no upper/lower limit.
@@ -88,6 +90,7 @@ params = {
     'scoring': 'r2',
     'subtract_baseline': True,
     'min_units_src': 5,
+    'lick_groups': [ 0, 0.6, 1.2, 2.4, 4.8 ],
 }
 
 # %% [markdown]
@@ -120,17 +123,6 @@ epochs = {
 }
 
 # %% [markdown]
-# Trials can be classified using the `trial_types` dictionary.
-# TODO
-
-# %%
-# define sets of trials 
-trial_groups = {
-    'lick_0.6': (0.6, None, 'lick'), # e.g. all trials with lick times relative to cue > 0.6 s
-    'lick_1.2': (1.2, None, 'lick'),
-}
-
-# %% [markdown]
 # # Data handling
 #
 # ## Loading data 
@@ -155,6 +147,7 @@ rec1 = Recording(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_imec0_JRC
 
 # %%
 # display trial information
+rec_ops.add_lick_group(rec1.df_trl, params['lick_groups'])
 vis.plot_trial_infos(rec1.df_trl)
 
 # %% [markdown]

@@ -10,6 +10,7 @@ params_1:
     scoring: r2
     subtract_baseline: True
     min_units_src: 5
+    lick_groups: [ 0, 0.6, 1.2, 2.4, 4.8 ]
 params_2:
     bin_size: 0.2
     spike_width_src: [null, null]
@@ -22,3 +23,4 @@ params_2:
     scoring: r2
     subtract_baseline: False
     min_units_src: 5
+    lick_groups: [ 0, 0.6, 1.2, 2.4, 4.8 ]
