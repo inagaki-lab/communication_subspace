@@ -369,3 +369,54 @@ def get_ypred(dfx_bin, dfy_bin, mod, scoring=None, n_cv=10):
     unt2score = { u: cvs(u).mean() for u in dfy_bin }
 
     return Y_pred, unt2score
+
+def analyze_rrr(df):
+    '''Optimal and best model for reduced rank regression.
+
+    The optimal rank is defined as the lowest rank
+    that is within 1 SEM of the best model.
+
+    The standard error of the mean (SEM) is calculated
+    as SEM = STD / sqrt(N)
+
+    Definition taken from https://doi.org/10.1016/j.neuron.2019.01.026
+    
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Dataframe with results of gridsearch for reduced rank regression
+
+    Returns
+    -------
+    rrr_dict : dict
+        Score and rank for optimal and best model
+    '''
+    
+    # best model
+    idx_best = df.loc[:, "mean_test_score"].argmax()
+    rank_best = df.loc[idx_best, "param_mod__rank"]
+    score_best = df.loc[idx_best, "mean_test_score"]
+
+    # standard error of best model
+    std_best = df.loc[idx_best, "std_test_score"]
+    ncv = len([c for c in df.columns if c.startswith("split")])
+    sem_best =  std_best / np.sqrt(ncv)
+
+    # all models with in 1 SEM of best model
+    thresh = score_best - sem_best
+    within_1sem = df.loc[:, "mean_test_score"] > thresh
+
+    # optimal model
+    idx_opt = within_1sem.idxmax()
+    rank_opt = df.loc[idx_opt, "param_mod__rank"]
+    score_opt = df.loc[idx_opt, "mean_test_score"]
+
+    rrr_dict = {
+        "rank_opt": rank_opt,
+        "score_opt": score_opt,
+        "rank_best": rank_best,
+        "score_best": score_best,
+    }
+    
+    return rrr_dict

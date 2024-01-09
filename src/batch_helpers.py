@@ -181,6 +181,7 @@ def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), over
         
 
 
+
 def load_scores(ps_csv):
     '''Load scores from multiple csv files.
 
@@ -209,11 +210,11 @@ def load_scores(ps_csv):
         anima, date = recor.split('_')
         probe = parts[-7]
 
-        df = pd.read_csv(p_csv)
+        df_scores = pd.read_csv(p_csv)
 
-        dfs.append(pd.DataFrame(data={
-            'unit':         df.loc[:, 'unit'], # TODO change this for newer data
-            'score':        df.iloc[:, 1],
+        data = {
+            'unit':         df_scores.loc[:, 'unit'], # TODO change this for newer data
+            'score':        df_scores.iloc[:, 1],
             'epoch':        epoch,
             'interaction':  inter,
             'settings':     setti,
@@ -221,8 +222,17 @@ def load_scores(ps_csv):
             'animal':       anima,
             'date' :        date,
             'probes':       probe
-        })
-        )
+        }
+
+        p_prq = p_csv.parent / 'reg_rrr.parquet'
+        if p_prq.exists():
+            df_ranks = pd.read_parquet(p_prq)
+            rrr = reg.analyze_rrr(df_ranks)
+            data.update(rrr)
+        else:
+            print(f'INFO {p_prq} not found, not loading RRR results')
+
+        dfs.append(pd.DataFrame(data=data))
     df = pd.concat(dfs, ignore_index=True)
     df.loc[:, 'interaction_'] = df.loc[:, 'interaction'].map(lambda x: x.replace('ALM1', 'ALM').replace('ALM2', 'ALM'))
     df.loc[:, 'n_regions'] = df.loc[:, 'interaction'].apply(lambda x: len(x.split('_')))
