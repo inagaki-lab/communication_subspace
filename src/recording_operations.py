@@ -523,3 +523,33 @@ def filter_rate(df_spk, df_unt, df_trl, r_min=None, r_max=None):
     unts = { *df.loc[m, 'unit'] }  
 
     return unts
+
+def add_lick_group(df_trl, lick_groups=[0]):
+    '''Add a column to the dataframe that specifies the lick group for each trial.
+
+    Parameters
+    ----------
+    df_trl : pandas.DataFrame
+        Trial information
+    lick_groups : dict, optional
+        Lick times to construct intervals in seconds relative to cue, by default [0]
+    '''
+    
+    dt_lck = df_trl.loc[:, 'dt_lck']
+    t0, tf = dt_lck.min(), dt_lck.max()
+
+    if t0 < lick_groups[0]:
+        lick_groups = [ t0 ] + lick_groups
+    if tf > lick_groups[-1]:
+        lick_groups = lick_groups + [ tf ]
+
+    labels = [ f'{t0:.1f} - {tf:.1f}' for t0, tf in zip(lick_groups[:-1], lick_groups[1:]) ]
+
+    lck_grp = pd.cut(dt_lck, bins=lick_groups, labels=labels, right=True, include_lowest=True)
+    lck_grp = lck_grp.cat.add_categories(['no_lick'])
+    lck_grp = lck_grp.fillna('no_lick')
+
+    df_trl.loc[:, 'lick_group'] = lck_grp
+
+
+

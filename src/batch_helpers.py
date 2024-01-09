@@ -30,7 +30,7 @@ def load_yml(path):
 
     return cfg
 
-def processing_wrapper(p_out, params, epochs, recX, recY):
+def processing_wrapper(p_out, params, epochs, recX, recY, overwrite):
 
     # create folder
     p_out.mkdir(exist_ok=True, parents=True)
@@ -38,12 +38,17 @@ def processing_wrapper(p_out, params, epochs, recX, recY):
     # path for params.json
     p_params = p_out / 'params.json'
     p_epochs = p_out / 'epochs.json'
-    if p_params.exists():
+    if p_params.exists() and not overwrite:
         print(f'params.json found. Skipping {p_out}')
         return 
     
     # load data, select trials and units based on `params`
     dfx_bin, dfy_bin = rec_ops.select_data(recX, rec2=recY, params=params)
+
+    # check if sufficient units in source population
+    n_src = len(recX.units)
+    if n_src < params['min_units_src']:
+        print(f'WARNING: {n_src} units in source region after filtering, skipping analysis')
 
     # subtract baseline, if required
     if params['subtract_baseline']:
@@ -96,7 +101,7 @@ def processing_wrapper(p_out, params, epochs, recX, recY):
     pd.Series(epochs).to_json(p_epochs)
     pd.Series(params).to_json(p_params)
 
-def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), out_dir='analysis'):
+def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), overwrite=False, out_dir='analysis'):
     '''Wrapper for processing multiple recordings.
 
     This creates the subfolders for all possible interactions between two recordings
@@ -117,6 +122,8 @@ def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), out_
         Run separate analyses for each epoch, by default dict()
     probe_names : dict, optional
         Mapping of matlab file names to short brain regions names, by default dict()
+    overwrite : bool, optional
+        Overwrite existing analysis, by default False
     out_dir : path-like, optional
         Output folder name, by default 'analysis'
     '''
@@ -139,24 +146,85 @@ def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), out_
         recA, recB = Recording(p_matA), Recording(p_matB)
         try: # define short names for regions
             regionA, regionB = probe_names[p_matA.name], probe_names[p_matB.name]
+
         except KeyError:
             regionA, regionB = 'regA', 'regB'
             print(f'WARNING: no probe name found for {p_matA.name} or {p_matB.name}')
             print(f'         using {regionA} and {regionB} instead')
 
+        # plot general info
+        rec_ops.add_lick_group(recA.df_trl, params['lick_groups'])
+        rec_ops.add_lick_group(recB.df_trl, params['lick_groups'])
+
+        vis.plot_trial_infos(recA.df_trl, path=p_dir / f'{out_dir}/trial_infos_{regionA}.png')
+        vis.plot_trial_infos(recB.df_trl, path=p_dir / f'{out_dir}/trial_infos_{regionB}.png')
+
         # regionA -> regionB
         p_out = p_dir / f'{out_dir}/{regionA}_{regionB}'
-        processing_wrapper(p_out, params, epochs, recA, recB)
+        print(f'     now doing {regionA} -> {regionB}')
+        processing_wrapper(p_out, params, epochs, recA, recB, overwrite)
 
         # regionB -> regionA
+        print(f'     now doing {regionB} -> {regionA}')
         p_out = p_dir / f'{out_dir}/{regionB}_{regionA}'
-        processing_wrapper(p_out, params, epochs, recB, recA)
+        processing_wrapper(p_out, params, epochs, recB, recA, overwrite)
 
         # regionA
+        print(f'     now doing within {regionA}')
         p_out = p_dir / f'{out_dir}/{regionA}'
-        processing_wrapper(p_out, params, epochs, recA, None)
+        processing_wrapper(p_out, params, epochs, recA, None, overwrite)
 
         # regionB
+        print(f'     now doing within {regionB}')
         p_out = p_dir / f'{out_dir}/{regionB}'
-        processing_wrapper(p_out, params, epochs, recB, None)
+        processing_wrapper(p_out, params, epochs, recB, None, overwrite)
         
+
+
+def load_scores(ps_csv):
+    '''Load scores from multiple csv files.
+
+    Additinoal info in the output dataframe assumes following folder structure:
+    `{probe}/{animal}_{date}/analysis/{parameter_set}/{interaction}/{epoch}/pred_ridge_scores.csv`
+
+    Parameters
+    ----------
+    ps_csv : list of path-like
+        CSV files containing scores created during `processing_wrapper`
+
+    Returns
+    -------
+    df : pandas.DataFrame
+        Scores for each unit in each recording
+    '''
+
+    dfs = []
+    for p_csv in ps_csv:
+
+        parts = p_csv.parts
+        epoch = parts[-2]
+        inter = parts[-3]
+        setti = parts[-4]
+        recor = parts[-6]
+        anima, date = recor.split('_')
+        probe = parts[-7]
+
+        df = pd.read_csv(p_csv)
+
+        dfs.append(pd.DataFrame(data={
+            'unit':         df.loc[:, 'unit'], # TODO change this for newer data
+            'score':        df.iloc[:, 1],
+            'epoch':        epoch,
+            'interaction':  inter,
+            'settings':     setti,
+            'recording':    recor,
+            'animal':       anima,
+            'date' :        date,
+            'probes':       probe
+        })
+        )
+    df = pd.concat(dfs, ignore_index=True)
+    df.loc[:, 'interaction_'] = df.loc[:, 'interaction'].map(lambda x: x.replace('ALM1', 'ALM').replace('ALM2', 'ALM'))
+    df.loc[:, 'n_regions'] = df.loc[:, 'interaction'].apply(lambda x: len(x.split('_')))
+
+    return df

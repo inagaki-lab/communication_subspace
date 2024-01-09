@@ -7,7 +7,7 @@
 #       extension: .py
 #       format_name: percent
 #       format_version: '1.3'
-#       jupytext_version: 1.16.0
+#       jupytext_version: 1.11.2
 #   kernelspec:
 #     display_name: ml
 #     language: python
@@ -19,7 +19,6 @@
 # %autoreload 2
 
 from pathlib import Path
-
 from src import batch_helpers as bh
 
 
@@ -93,7 +92,8 @@ params = {
     'first_lick' : (None, None),
     'type_incl': [ 'l_n', ],
     'scoring': 'r2',
-    'subtract_baseline': True
+    'subtract_baseline': True,
+    'min_units_src': 5,
 }
 epochs = {
     'all'       : (None, None, 'cue'), 
