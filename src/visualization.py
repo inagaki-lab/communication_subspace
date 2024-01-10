@@ -298,4 +298,16 @@ def plot_opt_ranks(df, path=""):
         fig.savefig(path)
         plt.close(fig)
 
+def plot_mode(df_mode, path=""):
+
+    fig, ax = plt.subplots()
+    sns.lineplot(ax=ax, data=df_mode, x='bin', y='mode_activity', hue='lick_group', )
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Mode activity')
+
+    fig.tight_layout()
+    if path:
+        fig.savefig(path)
+        plt.close(fig)
+
 

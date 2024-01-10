@@ -245,3 +245,21 @@ vis.plot_gridsearch(rr_mods, 'reduced rank', other_mods={'linear': lin_mods, 'ri
 # %%
 rrr = reg.analyze_rrr(pd.DataFrame(rr_mods.cv_results_))
 rrr
+
+# %% [markdown]
+# # Activity modes
+
+# %%
+# choose parameters to filter data for mode calculation
+params_mode = {
+    'bin_size': 0.1,
+    'rate_src': (1, None), 
+    'spike_width_src': (None, None), 
+    'perc_trials': 0.9,             
+    'first_lick' : (None, None),
+    'type_incl': [ 'l_n', ],
+}
+
+X = rec_ops.filter_and_bin(rec1, params_mode)
+df_ramp = rec_ops.get_ramp_mode(X, rec1.df_trl, group='lick_group')
+vis.plot_mode(df_ramp)
