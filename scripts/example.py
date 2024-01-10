@@ -18,6 +18,7 @@
 # %load_ext autoreload
 # %autoreload 2
 import numpy as np
+import pandas as pd 
 from pathlib import Path
 
 from src.recording import Recording
@@ -236,3 +237,11 @@ vis.plot_mean_response(Y, Y_pred, scores)
 rr_mods = reg.reduced_rank_regression(X, Y, scoring=params['scoring'])
 rr_mod = rr_mods.best_estimator_
 vis.plot_gridsearch(rr_mods, 'reduced rank', other_mods={'linear': lin_mods, 'ridge': ridge_mods}, logscale=False)
+
+# %% [markdown]
+# The optimal rank is defined as the lowest rank that is within one SEM of the CV restuls for the best scoring rank.
+# The best model is the one with the highest mean score.
+
+# %%
+rrr = reg.analyze_rrr(pd.DataFrame(rr_mods.cv_results_))
+rrr

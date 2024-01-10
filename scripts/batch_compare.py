@@ -25,10 +25,13 @@ import seaborn as sns
 
 
 # %% [markdown]
-# # Load scores
+# # Load data
 #
-# Here we load scores from the ridge regression predictions, 
-# which are stored in the `pred_ridge_scores.csv` files, into one big dataframe.
+# Here we load:
+# - scores from the ridge regression predictions (`pred_ridge_scores.csv`)
+# - optimal rank for the reduced rank regression (`reg_rrr.parquet`)
+#
+# The results are compiled into a single dataframe.
 # Note that this selection inclues all recordings under the `p_root`.
 
 # %%
@@ -39,7 +42,7 @@ scores = bh.load_scores(p_scores)
 scores
 
 # %% [markdown]
-# # Compare parameter sets
+# # Compare scores across parameter sets
 #
 # Here we compare the parameter sets `params_1` and `params_2` that we created in the previous notebook.
 # For this we select a subste of the scores:
@@ -69,7 +72,7 @@ df.loc[:, 'subtract_baseline'] = df.loc[:, 'settings'].map(d)
 vis.plot_box_and_points(df, x='interaction', y='score', hue='subtract_baseline')
 
 # %% [markdown]
-# # Compare epochs
+# # Compare scores across epochs
 #
 # To compare epochs, we select a subset of the scores:
 # - only parameter set `params_1`
@@ -91,7 +94,7 @@ df = scores.loc[idx1 & idx2 & idx3, :].copy()
 vis.plot_box_and_points(df, x='interaction', y='score', hue='epoch', hue_order=l_epochs)
 
 # %% [markdown]
-# # Compare sessions
+# # Compare scores across sessions
 #
 # To compare sessions, we select a subset of the scores:
 # - only parameter set `params_1`
@@ -105,3 +108,23 @@ df = scores.loc[idx1 & idx2, :].copy()
 
 # plot
 vis.plot_box_and_points(df, x='probes', y='score', hue='animal')
+
+# %% [markdown]
+# # Compare optimal rank across brain regions
+
+# %%
+# subselection of dataframe
+idx1 = scores.loc[:, 'settings'].eq('params_1')
+idx2 = scores.loc[:, 'epoch'].eq('all')
+df = scores.loc[idx1 & idx2, :].copy()
+
+# select only one of the units
+df = scores.groupby(['recording', 'interaction']).first().reset_index()
+df
+
+
+
+# %%
+vis.plot_opt_ranks(df,)
+
+# %%

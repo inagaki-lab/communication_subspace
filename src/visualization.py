@@ -274,9 +274,28 @@ def plot_box_and_points(df, x, y, col=None, hue=None, order=[], hue_order=[], yl
         size=1,
     )
 
-    # fig = g.fig
-    # fig.tight_layout()
-    # if path:
-    #     fig.savefig(path)
-    #     plt.close(fig)
+    fig = g.fig
+    fig.tight_layout()
+    if path:
+        fig.savefig(path)
+        plt.close(fig)
+
+
+def plot_opt_ranks(df, path=""):
+    "Plot best scores vs optimal ranks"
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+
+    sns.scatterplot(data=df, x="rank_opt", y="score_best", hue="interaction", ax=ax)
+    ax.set_xlabel("rank_opt")
+    ax.set_ylabel("score_best")
+
+    # Anchor legend at the top right outside the plot
+    sns.move_legend(ax, loc='upper left', bbox_to_anchor=(1, 1))
+
+    fig.tight_layout()
+    if path:
+        fig.savefig(path)
+        plt.close(fig)
+
 
