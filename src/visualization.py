@@ -257,6 +257,7 @@ def plot_box_and_points(df, x, y, col=None, hue=None, order=[], hue_order=[], yl
         palette="pastel",
         sharex=False,
         facet_kws={"ylim": ylim},
+        legend=True
     )
 
     g.map(
@@ -274,6 +275,8 @@ def plot_box_and_points(df, x, y, col=None, hue=None, order=[], hue_order=[], yl
         size=1,
     )
 
+    sns.move_legend(g, loc='upper left', bbox_to_anchor=(1, 1))
+    
     fig = g.fig
     fig.tight_layout()
     if path:

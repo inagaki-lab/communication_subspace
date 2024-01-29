@@ -140,6 +140,7 @@ def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), over
     for p_dir in p_dirs:
         print(f'     {p_dir}')
         p_dir = Path(p_dir)
+        (p_dir / out_dir).mkdir(exist_ok=True, parents=True)
 
         # load recordings
         p_matA, p_matB = [ *p_dir.glob('*.mat')]
