@@ -14,13 +14,17 @@ The script files `scripts/*.py` are workflows for the individual steps in the an
 
 |script file|use case|
 |---|---|
-|`example.py.py`| detailed explanation on data handling and regression models|
-|`batch_mode.py`| convenience workflow to analyze many recordings |
+|[`example.py`](scripts/example.py)| detailed explanation on data handling and regression models|
+|[`batch_mode.py`](scripts/batch_analysis.py)| convenience workflow to analyze many recordings |
+
+During the installation a notebook file is created in the `notebooks` folder 
+for each script file in the `scripts` folder.
 
 ## Installation
 ```bash
 # create conda environment with necessary dependencies
 conda env create -n communication_subspace -f environment.yml
+conda activate communication_subspace
 
 # get source code
 git clone https://github.com/bidaye-lab/communication_subspace
@@ -28,5 +32,8 @@ git clone https://github.com/bidaye-lab/communication_subspace
 # install code as local local python module
 cd communication_subspace
 pip install -e .
+
+# convert scripts to notebooks
+jupytext --sync scripts/*.py
 ```
 
