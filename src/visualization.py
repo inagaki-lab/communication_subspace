@@ -159,7 +159,7 @@ def plot_mean_response(df_bin, arr_pred=None, scores={}, path=""):
             ax=ax, data=df, x="bin", y=u, hue="type", errorbar="sd", legend=False
         )
 
-        title = f"unit {u}"
+        title = f"{u[0]} {u[1]}"
         if scores:
             title += f" ({scores[u]:1.3f})"
         ax.set_title(title)
@@ -184,7 +184,7 @@ def plot_mean_response(df_bin, arr_pred=None, scores={}, path=""):
 
 def _barplot_wrapper(df, col, ax):
     # plot trial type counts
-    sns.histplot(data=df, y=col, ax=ax, stat="percent", multiple="stack", shrink=0.8)
+    sns.histplot(data=df, y=col, ax=ax, discrete=True, stat="percent", multiple="stack", shrink=0.8)
 
     # absolute and relative counts as labels
     c = ax.containers[0]
@@ -213,21 +213,33 @@ def plot_trial_infos(df_trl, path=""):
     _barplot_wrapper(df, "short", ax)
     ax.set_ylabel("Trial type")
 
-    ax = axarr[1]
-    ax.set_title("trial response distribution")
-    _barplot_wrapper(df, "response", ax)
-    ax.set_ylabel("Trial response")
+    if "lick_group" in df.columns:
+    
+        ax = axarr[1]
+        ax.set_title("trial response distribution")
+        _barplot_wrapper(df, "response", ax)
+        ax.set_ylabel("Trial response")
 
-    ax = axarr[2]
-    ax.set_title("lick time distribution")
-    sns.histplot(
-        data=df, x="dt_lck", hue="response", ax=ax, multiple="layer", binwidth=0.2
-    )
-    ax.set_xlabel("lick time relative to cue (s)")
+        ax = axarr[2]
+        ax.set_title("lick time distribution")
+        sns.histplot(
+            data=df, x="dt_lck", hue="response", ax=ax, multiple="layer", binwidth=0.2
+        )
+        ax.set_xlabel("lick time relative to cue (s)")
 
-    ax = axarr[3]
-    ax.set_title("lick groups")
-    sns.histplot(data=df, x="lick_group", ax=ax, hue="response", multiple="stack", shrink=0.8)
+        ax = axarr[3]
+        ax.set_title("lick groups")
+        sns.histplot(data=df, x="lick_group", ax=ax, hue="response", multiple="stack", shrink=0.8)
+    
+    else:
+        ax = axarr[1]
+        ax.set_title("water raio distribution")
+        _barplot_wrapper(df, "water_ratio", ax)
+        ax.set_ylabel("Water ratio")
+
+        ax = ax.twiny()
+        sns.lineplot(df.loc[:, 'water_ratio'], ax=ax, color='C1')
+        ax.margins(x=0)
 
     fig.tight_layout()
     if path:

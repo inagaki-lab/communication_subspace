@@ -30,32 +30,16 @@ def load_yml(path):
 
     return cfg
 
-def processing_wrapper(p_out, params, epochs, recX, recY, overwrite):
-
-    # create folder
-    p_out.mkdir(exist_ok=True, parents=True)
-
-    # path for params.json
-    p_params = p_out / 'params.json'
-    p_epochs = p_out / 'epochs.json'
-    if p_params.exists() and not overwrite:
-        print(f'params.json found. Skipping {p_out}')
-        return 
+def regression_wrapper(p_out, rec, dfx_bin, dfy_bin, params, epochs):
     
-    # load data, select trials and units based on `params`
-    dfx_bin, dfy_bin = rec_ops.select_data(recX, rec2=recY, params=params)
-
     # check if sufficient units in source population
-    n_src = len(recX.units)
+    n_src = len(dfx_bin.columns)
     if n_src < params['min_units_src']:
         print(f'WARNING: {n_src} units in source region after filtering, skipping analysis')
+        return
 
-    # subtract baseline, if required
-    if params['subtract_baseline']:
-        dfx_bin = rec_ops.subtract_baseline(dfx_bin, recX.df_spk)
-        dfy_bin = rec_ops.subtract_baseline(dfy_bin, recX.df_spk if recY is None else recY.df_spk)
     if dfx_bin.empty:
-        print(f'INFO no data left, skipping recX: {recX.session}, recY: {recY.session}')
+        print(f'INFO no data left, skipping rec: {rec.session}')
         return
 
     # do fit for each epoch separately
@@ -66,11 +50,15 @@ def processing_wrapper(p_out, params, epochs, recX, recY, overwrite):
         p_out_epo.mkdir(exist_ok=True)
 
         # select subset of data
-        dfx_bin_epo = rec_ops.select_epoch(dfx_bin, epo, recX.df_trl)
-        dfy_bin_epo = rec_ops.select_epoch(dfy_bin, epo, recX.df_trl if recY is None else recY.df_trl)
+        dfx_bin_epo = rec.select_epoch(dfx_bin, epo)
+        dfy_bin_epo = rec.select_epoch(dfy_bin, epo)
+
+        # save data
+        dfx_bin_epo.to_parquet(p_out_epo / 'dfx_bin.parquet')
+        dfy_bin_epo.to_parquet(p_out_epo / 'dfy_bin.parquet')
 
         if dfx_bin_epo.empty:
-            print(f'INFO no data left in epoch {name}, skipping recX: {recX.session}, recY: {recY.session}')
+            print(f'INFO no data left in epoch {name}, skipping rec: {rec.session}')
             continue
 
         # linear regression (= ridge with alpha=0)
@@ -97,20 +85,39 @@ def processing_wrapper(p_out, params, epochs, recX, recY, overwrite):
         ds.index.name = 'unit'
         ds.to_csv(p_out_epo / 'pred_ridge_scores.csv', index=True)
 
-    # save params
-    pd.Series(epochs).to_json(p_epochs)
-    pd.Series(params).to_json(p_params)
+def processing_wrapper_probes(p_out, probe_name_A, probe_name_B, rec, params, epochs, overwrite):
 
-def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), overwrite=False, out_dir='analysis'):
-    '''Wrapper for processing multiple recordings.
+    # create folder
+    p_out.mkdir(exist_ok=True, parents=True)
+
+    # path for params.json
+    p_params = p_out / 'params.json'
+    if p_params.exists() and not overwrite:
+        print(f'params.json found. Skipping {p_out}')
+        return 
+    
+    # load data, select trials and units based on `params`
+    dfx_bin, dfy_bin = rec.select_data_probes(probe_name_A, probe_name_B, params=params)
+
+    # do regressions
+    regression_wrapper(p_out, rec, dfx_bin, dfy_bin, params, epochs)
+
+    # save params and dataframes
+    pd.Series(epochs).to_json(p_out / 'epochs.json')
+    pd.Series(params).to_json(p_params)
+    rec.df_trl.to_parquet(p_out / 'df_trl.parquet')
+    rec.df_unt.to_parquet(p_out / 'df_unt.parquet')
+
+def analyze_interactions_probes(p_dirs, params, probe_class, probe_kwargs=dict(), epochs=dict(), probe_names=dict(), overwrite=False, out_dir='analysis'):
+    '''Wrapper for analyzing probe interactions for multiple sessions.
 
     This creates the subfolders for all possible interactions between two recordings
-    and then calls `processing_wrapper` for each of them.
+    and then calls a processing wrapper for each of them.
 
     If `epochs` is empty, the only epoch will be 'all'.
 
     If some .mat file is not defined in `probe_names`,
-    the probe names will be set to 'regA' and 'regB'.
+    the probe names will be set to 'proA' and 'proB'.
 
     Parameters
     ----------
@@ -118,10 +125,14 @@ def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), over
         Folders with recordings, must contain two .mat files each
     params : dict
         Parameters for data selection and regression
+    probe_class : BaseProbe
+        Probe object with specific methods for each matlab file structure
+    probe_kwargs : dict, optional
+        Additional arguments for Probe object, by default dict()
     epochs : dict, optional
         Run separate analyses for each epoch, by default dict()
     probe_names : dict, optional
-        Mapping of matlab file names to short brain regions names, by default dict()
+        Mapping of matlab file names to short probe names, by default dict()
     overwrite : bool, optional
         Overwrite existing analysis, by default False
     out_dir : path-like, optional
@@ -139,49 +150,156 @@ def analyze_interactions(p_dirs, params, epochs=dict(), probe_names=dict(), over
     print(f'>>>> now processing recordings ....')
     for p_dir in p_dirs:
         print(f'     {p_dir}')
-        p_dir = Path(p_dir)
-        (p_dir / out_dir).mkdir(exist_ok=True, parents=True)
+        p_out = Path(p_dir) / out_dir
+        p_out.mkdir(exist_ok=True, parents=True)
 
         # load recordings
-        p_matA, p_matB = [ *p_dir.glob('*.mat')]
-        recA, recB = Recording(p_matA), Recording(p_matB)
-        try: # define short names for regions
-            regionA, regionB = probe_names[p_matA.name], probe_names[p_matB.name]
+        p_matA, p_matB = [ *p_dir.glob('*.mat')][:2] # get first two .mat files
+        probe_A = probe_class(p_matA, bin_size=params['bin_size'], **probe_kwargs)
+        probe_B = probe_class(p_matB, bin_size=params['bin_size'], **probe_kwargs)
+        try:  # define short names for regions
+            probe_name_A, probe_name_B = probe_names[p_matA.name], probe_names[p_matB.name]
 
         except KeyError:
-            regionA, regionB = 'regA', 'regB'
+            probe_name_A, probe_name_B = 'proA', 'proB'
             print(f'WARNING: no probe name found for {p_matA.name} or {p_matB.name}')
-            print(f'         using {regionA} and {regionB} instead')
+            print(f'         using {probe_name_A} and {probe_name_B} instead')
+        rec = Recording({
+            probe_name_A: probe_A,
+            probe_name_B: probe_B
+        })
 
         # plot general info
-        rec_ops.add_lick_group(recA.df_trl, params['lick_groups'])
-        rec_ops.add_lick_group(recB.df_trl, params['lick_groups'])
+        vis.plot_trial_infos(rec.df_trl, path=p_out / f'trial_infos.png')
 
-        vis.plot_trial_infos(recA.df_trl, path=p_dir / f'{out_dir}/trial_infos_{regionA}.png')
-        vis.plot_trial_infos(recB.df_trl, path=p_dir / f'{out_dir}/trial_infos_{regionB}.png')
+        other_args = {
+            'params': params,
+            'epochs': epochs,
+            'rec': rec,
+            'overwrite': overwrite
+        }
+        # A -> B
+        print(f'     now doing {probe_name_A} -> {probe_name_B}')
+        processing_wrapper_probes(
+            p_out / f'{probe_name_A}_{probe_name_B}', probe_name_A, probe_name_B, **other_args)
 
-        # regionA -> regionB
-        p_out = p_dir / f'{out_dir}/{regionA}_{regionB}'
-        print(f'     now doing {regionA} -> {regionB}')
-        processing_wrapper(p_out, params, epochs, recA, recB, overwrite)
+        # A -> B
+        p_out = p_dir / f'{out_dir}/{probe_name_B}_{probe_name_A}'
+        processing_wrapper_probes(
+            p_out / f'{probe_name_B}_{probe_name_A}', probe_name_B, probe_name_A, **other_args)
 
-        # regionB -> regionA
-        print(f'     now doing {regionB} -> {regionA}')
-        p_out = p_dir / f'{out_dir}/{regionB}_{regionA}'
-        processing_wrapper(p_out, params, epochs, recB, recA, overwrite)
+        # A -> A'
+        print(f'     now doing within {probe_name_A}')
+        processing_wrapper_probes(
+            p_out / f'{probe_name_A}', probe_name_A, probe_name_A, **other_args)
 
-        # regionA
-        print(f'     now doing within {regionA}')
-        p_out = p_dir / f'{out_dir}/{regionA}'
-        processing_wrapper(p_out, params, epochs, recA, None, overwrite)
+        # B -> B'
+        print(f'     now doing within {probe_name_B}')
+        processing_wrapper_probes(
+            p_out / f'{probe_name_B}', probe_name_B, probe_name_B, **other_args)
 
-        # regionB
-        print(f'     now doing within {regionB}')
-        p_out = p_dir / f'{out_dir}/{regionB}'
-        processing_wrapper(p_out, params, epochs, recB, None, overwrite)
+def processing_wrapper_areas(p_out, areas_A, areas_B, rec, params, epochs, overwrite):
+
+    # create folder
+    p_out.mkdir(exist_ok=True, parents=True)
+
+    # path for params.json
+    p_params = p_out / 'params.json'
+    if p_params.exists() and not overwrite:
+        print(f'params.json found. Skipping {p_out}')
+        return 
+    
+    # load data, select trials and units based on `params`
+    dfx_bin, dfy_bin = rec.select_data_area_code(areas_A, areas_B, params)
+
+    # do regressions
+    regression_wrapper(p_out, rec, dfx_bin, dfy_bin, params, epochs)
+
+    # save params and dataframes
+    pd.Series(epochs).to_json(p_out / 'epochs.json')
+    pd.Series(params).to_json(p_params)
+    rec.df_trl.to_parquet(p_out / 'df_trl.parquet')
+    rec.df_unt.to_parquet(p_out / 'df_unt.parquet')
+
+
+def analyze_interactions_areas(p_dirs, params, probe_class, probe_kwargs=dict(), epochs=dict(), overwrite=False, out_dir='analysis'):
+    '''Wrapper for analyzing area interactions for multiple sessions.
+
+    This creates the subfolders for all possible interactions between two recordings
+    and then calls a processing wrapper for each of them.
+
+    If `epochs` is empty, the only epoch will be 'all'.
+
+    Parameters
+    ----------
+    p_dirs : list of path-like
+        Folders with recordings, must contain two .mat files each
+    params : dict
+        Parameters for data selection and regression
+    probe_class : BaseProbe
+        Probe object with specific methods for each matlab file structure
+    probe_kwargs : dict, optional
+        Additional arguments for Probe object, by default dict()
+    epochs : dict, optional
+        Run separate analyses for each epoch, by default dict()
+    overwrite : bool, optional
+        Overwrite existing analysis, by default False
+    out_dir : path-like, optional
+        Output folder name, by default 'analysis'
+    '''
+
+    print(f'>>>> starting analysis ')
+    print(f'>>>> writing output to: {out_dir}')
+    print(f'>>>> params: {params}')
+
+    if not epochs: # ensure that at least one epoch is specified
+        epochs = {'all': (None, None, 'cue')}
+    print(f'>>>> epochs: {epochs}')
+
+    print(f'>>>> now processing recordings ....')
+    for p_dir in p_dirs:
+        print(f'     {p_dir}')
+        p_out = Path(p_dir) / out_dir
+        p_out.mkdir(exist_ok=True, parents=True)
+
+        # load recordings
+        p_mats = [ *p_dir.glob('*.mat')]
         
+        # find differences in file names
+        name_parts = [ p.stem.split('_') for p in p_mats ]
+        for idx, s in enumerate(name_parts[0]):
+            if s not in name_parts[1]:
+                break
 
+        probes = [probe_class(p, bin_size=params['bin_size'], **probe_kwargs) for p in p_mats]
+        rec = Recording({name_part[idx]: probe for name_part, probe in zip(name_parts, probes)})
+        areas_A, areas_B = params['area_code_A'], params['area_code_B']
+        # plot general info
+        vis.plot_trial_infos(rec.df_trl, path=p_out / f'trial_infos.png')
 
+        other_args = {
+            'params': params,
+            'epochs': epochs,
+            'rec': rec,
+            'overwrite': overwrite
+        }
+        s_A, s_B = ', '.join(map(str, areas_A)), ', '.join(map(str, areas_B))
+
+        # A -> B
+        print(f'     now doing areas A -> B ({s_A} -> {s_B})')
+        processing_wrapper_areas(p_out / 'A_B', areas_A, areas_B, **other_args)
+
+        # A -> B
+        print(f'     now doing areas B -> A ({s_B} -> {s_A})')
+        processing_wrapper_areas(p_out / 'B_A', areas_B, areas_A, **other_args)
+
+        # A -> A'
+        print(f'     now doing areas A -> A\' ({s_A} -> {s_A})')
+        processing_wrapper_areas(p_out / 'A', areas_A, areas_A, **other_args)
+
+        # B -> B'
+        print(f'     now doing areas B -> B\' ({s_B} -> {s_B})')
+        processing_wrapper_areas(p_out / 'B', areas_B, areas_B, **other_args)
 
 def load_scores(ps_csv):
     '''Load scores from multiple csv files.

@@ -22,6 +22,7 @@ import pandas as pd
 from pathlib import Path
 
 from src.recording import Recording
+from src.probe import ZProbe, YProbe
 from src import (
     recording_operations as rec_ops,
     visualization as vis,
@@ -45,15 +46,12 @@ from src import (
 # Spike width filter in ms applied to the source (src) population
 # - `spike_width_trg : (float, float)`\
 # Spike width filter in ms applied to the target (trg) population
-# - `perc_trials : float`\
+# - `trial_overlap : float`\
 # Percentage of trials filter applied to neurons.
 # Since the valid trial range for individual neurons may differ greatly, 
 # we choose a fraction of trials that we want to keep (0.9 = 90 %).
 # Then, we drop neurons until the remaining neurons cover at least
 # this fraction of the maximum available trial range.
-# - `first_lick : (float, float)`\
-# Lick time filter in seconds applied to trials.
-# This is the time of the first lick relative to cue onset.
 # - `type_incl: list of str`\
 # Trial type filter applied to trials.
 # Strings are matched with beginning of `unit(1).Behavior.stim_type_name` strings.
@@ -70,29 +68,60 @@ from src import (
 # - `min_units_src : int`\
 # Minimum number of units in source population.
 # This will skip the analysis in batch mode.
-# - `lick_groups: list of float`\
-# Define intervals of lick times in seconds relative to cue for trial classification.
 #
 # Note that when defining intervals `(float, float)`, set one of the values to `None`
 # for no upper/lower limit.
 #
-# Note that for within-region analysis, only source thresholds apply.
+# ## settings specific to ZProbe
+# For the `Z` unit structure matlab file, the following settings are available:
+# - `first_lick : (float, float)`\
+# Lick time filter in seconds applied to trials.
+# This is the time of the first lick relative to cue onset.
+# - `lick_groups: list of float`\
+# Define intervals of lick times in seconds relative to cue for trial classification.
+#
+# ## Settings specific to YProbe
+# For the `Y` unit structure matlab file, the following settings are available:
+# - `only_good`: bool\
+# Whether to include only good units (`GoodUnits == 1`).
+# - `area_code_A: int or set of int`\
+# Aread code(s) to include one population.
+# - `area_code_B: int or set of int`\
+# Aread code(s) to include in the other population.
+#
+# Note to compare a subset of units within the same area code(s), set 
+# `area_code_A` and `area_code_B` to the same value(s).
+#
 
 # %%
-params = {
+# parameters for all unit structures
+params_global = {
     'bin_size': 0.2,
     'rate_src': (1, None), 
     'rate_trg': (1, None),
     'spike_width_src': (None, None), 
     'spike_width_trg': (  .5, None),
-    'perc_trials': 0.9,             
-    'first_lick' : (None, None),
+    'trial_overlap': 0.0,             
     'type_incl': [ 'l_n', ],
     'scoring': 'r2',
     'subtract_baseline': True,
     'min_units_src': 5,
-    'lick_groups': [ 0, 0.6, 1.2, 2.4, 4.8 ],
 }
+
+# parameters for Z unit structure
+params_z = params_global.copy()
+params_z.update({
+    'first_lick' : (None, None),
+    'lick_groups': [ 0, 0.6, 1.2, 2.4, 4.8 ],
+})
+
+# parameters for Y unit structure
+params_y = params_global.copy()
+params_y.update({
+    'only_good' : True,
+    'area_code_A': {7, 8},
+    'area_code_B': {3, 17},
+})
 
 # %% [markdown]
 # The `epochs` dictionary is used to define the time intervals of interest.
@@ -127,67 +156,130 @@ epochs = {
 # # Data handling
 #
 # ## Loading data 
-# Data from matlab files is loaded as `rec = Recording('somefolder/matlabfile.mat')`.
+# Data from each synchronously recorded  matlab file is loaded into a separate `Probe` objects.
 #
 # The data is stored in the following pandas DataFrames:
 # - `rec.df_trl`: trial information
 # - `rec.df_unt`: unit/neuron information
 # - `rec.df_spk`: spike times
+# - `rec.df_bin`: spike times binned by `params['bin_size']`
 #
-# The `Recording` class saves intermediate resutls in a temporary folder,
-# which is `somefolder/tmp_data` by default. This can be controlled via the `tmp_dir` argument.
-# The intermediate results are reused when the same data is loaded again.
+# These `Probe` attributes are saved in a temporary folder,
+# so they can be reused when testing different parameters.
+# The name of the temporary folder can be controlled via the `tmp_dir` argument.
 # To recalculate the intermediate results, either delete the temporary folder or set `force_overwrite=True`.
+#
+# ## Loading data from `Z` unit structure
+# Currently, the `Z` and `Y` unit structure matlab files are supported.
+# To load `Z` matlab files, make sure use `ZProbe` class and `params_z` dictionary.
+#
+#
 
 # %%
+# choose ZProbe
+Probe = ZProbe
+params = params_z
+
+# load individual probes
 data_root = Path(r'C:\temp\dual_ephys')
+probe1 = Probe(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_JRC_units.mat',
+               lick_groups=params['lick_groups'], bin_size=params['bin_size'], force_overwrite=False)
+probe2 = Probe(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_imec0_JRC_units.mat',
+               lick_groups=params['lick_groups'], bin_size=params['bin_size'], force_overwrite=False)
 
-# ALM-Str (imec0: STR)
-rec2 = Recording(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_JRC_units.mat')
-rec1 = Recording(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_imec0_JRC_units.mat')
+# combine probes into a recording with descriptive names
+probes = {
+    'ALM': probe1,
+    'STR': probe2,
+}
+rec = Recording(probes)
 
-# %%
-# display trial information
-rec_ops.add_lick_group(rec1.df_trl, params['lick_groups'])
-vis.plot_trial_infos(rec1.df_trl)
+# display trial information for ZProbe
+vis.plot_trial_infos_z(rec.df_trl)
 
 # %% [markdown]
-# ## Selecting data
+# ### Selecting units based on probes
+# For the communication subspace analysis, we need to select a source and a target population. 
+# The following example shows how set source and target populations based on which probe the 
+# neurons were recorded from. This is done via the `rec` object we just created:\
+# `rec.select_data_probes(probes_src, probes_trg, params)`
 #
-# For the communication subspace analysis, we need to select a source and a target population, which is done via the `select_data` function:
-# - To study the interaction between two regions, 
-# we call `X, Y = select_data(rec1, rec2=rec2, params=params)`.
-# This applies the filters in the `params` dictionary and returns DataFrames `X` and `Y` with the 
-# data corresponding to recordings `rec1` and `rec2`, respectively.
-# - To study the interaction within a single region,
-# we can call `X, Y = select_data(rec1, rec2=None, params=params)`,
-# which will also apply the filters in the `params` dictionary,
-# but the data in `X` and `Y` now contains randomly selected neurons from only `rec1`.
+# Here, `probes_src` and `probes_trg` are either strings or lists of strings 
+# that must match the probe names we defined above.
+# We can: 
+# - set `probes_src != probes_trg`  to study the interaction between two or more probes
+# - set `probes_src == probes_trg`  to study the interaction between a random subsample of units within the same probe(s)
 #
-# Optionally, we can
-# - subract the pre-cue baseline firing rate from the data with `subtract_baseline`
-# - select a time interval of interest defined in the `epoch` dictionary with `select_epoch`
+# Note when `probes_src != probes_trg`, the same probe name must not appear in both lists.
+#
+# At the same time, the `params` dictionary is used to filter the data based on the settings defined above.
+#
+# Finally, we can select a time interval of interest defined in the `epoch` dictionary with `select_epoch`.
+# Note that epochs relative to the first lick are only available for `Z` probe data.
 
 # %%
 # select units and trials, and bin data
-X, Y = rec_ops.select_data(rec1, rec2=rec2, params=params)
+X, Y = rec.select_data_probes('STR', 'ALM', params)
 
-# check if enough units are left is source recording (will skipp calculation in batch mode)
-if len(rec1.units) < params['min_units_src']:
+# check if enough units are left is source recording (will skip calculation in batch mode)
+if len(X.columns) < params['min_units_src']:
     print('WARNING: Too few units in source recording!')
 
-# subtract baseline
-if params['subtract_baseline']:
-    X = rec_ops.subtract_baseline(X, rec1.df_spk)
-    Y = rec_ops.subtract_baseline(Y, rec1.df_spk if rec2 is None else rec2.df_spk)
+# # optional: filter some epoch
+# X = rec.select_epoch(X, epochs['pre_lick'])
+# Y = rec.select_epoch(Y, epochs['pre_lick'])
+
+# %% [markdown]
+# ### Loading data from `Y` unit structure
+# Make sure to use `YProbe` class and `params_y` dictionary to load `Y` matlab files.
+
+# %%
+# choose YProbe
+Probe = YProbe
+params = params_y
+
+data_root = Path(r'C:\temp\trip_ephys')
+
+probe1 = Probe(data_root / 'J44-20221008_g0_imec0_JRC_units.mat',
+               bin_size=params['bin_size'], force_overwrite=False)
+probe2 = Probe(data_root / 'J44-20221008_g0_imec1_JRC_units.mat',
+               bin_size=params['bin_size'], force_overwrite=False)
+probe3 = Probe(data_root / 'J44-20221008_g0_imec2_JRC_units.mat',
+               bin_size=params['bin_size'], force_overwrite=False)
+
+probes = {
+    'imec0': probe1,
+    'imec1': probe2,
+    'imec2': probe3,
+}
+rec = Recording(probes)
+
+# display trial information for YProbe
+vis.plot_trial_infos_y(rec.df_trl)
+
+# %% [markdown]
+# ### Selecting units based on area codes
+# The selection is analogous to the probe-based selection, but we use:\
+# `rec.select_data_area_codes(area_code_A, area_code_B, params)`
+
+# %%
+# select units and trials, and bin data
+X, Y = rec.select_data_area_code(
+    area_code_src=params['area_code_A'], 
+    area_code_trg=params['area_code_B'], 
+    params=params)
+
+# check if enough units are left is source recording (will skip calculation in batch mode)
+if len(X.columns) < params['min_units_src']:
+    print('WARNING: Too few units in source recording!')
 
 # optional: filter some epoch
-X = rec_ops.select_epoch(X, epochs['pre_lick'], rec1.df_trl)
-Y = rec_ops.select_epoch(Y, epochs['pre_lick'], rec1.df_trl if rec2 is None else rec2.df_trl)
+X = rec.select_epoch(X, epochs['pre_cue'])
+Y = rec.select_epoch(Y, epochs['pre_cue'])
 
 # %% [markdown]
 # # Model fitting
-# Now we use the selected data to fit some models.
+# Now we use the `X` and `Y` data frames to fit some models; from now on we do not have to worry about the data handling anymore.
 # The models predict the activity of the target population based on the activity of the source population.
 # Each neuron in the target population is fitted independently and has therefore its own score.
 #
@@ -255,7 +347,7 @@ params_mode = {
     'bin_size': 0.1,
     'rate_src': (1, None), 
     'spike_width_src': (None, None), 
-    'perc_trials': 0.9,             
+    'trial_overlap': 0.9,             
     'first_lick' : (None, None),
     'type_incl': [ 'l_n', ],
 }

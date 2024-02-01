@@ -23,6 +23,7 @@ from src import (
     batch_helpers as bh,
     visualization as vis
 )
+from src.probe import ZProbe, YProbe
 
 
 # %% [markdown]
@@ -30,17 +31,18 @@ from src import (
 #
 # This workflow explains how to efficiently process multiple recordings.
 #
+#
+# ## Interaction between probes
 # We assume that each recording is stored in a separate folder.
-# Each folder contains two matlab files that contain data simultaneously recorded from probes in different brain regions.
+# Each folder contains two matlab files that contain data simultaneously recorded
+# from two probes
 #
 # For each recording, we want to calculate the following interactions:
-# - region A -> region B
-# - region B -> region A
-# - within region A
-# - within region B
-
-# %% [markdown]
-# ## Select folders to analyze
+# - probe A -> probe B
+# - probe B -> probe A
+# - within probe A
+# - within probe B
+#
 # Here, we define a list of folders that we want to analyze
 # using the `glob` function.
 # You can also define a list of folder names manually.
@@ -52,9 +54,10 @@ p_dirs = [ p for p in p_root.glob('*/') if p.is_dir() ]
 p_dirs
 
 # %% [markdown]
-# ## Define brain regions
+# ### Define probe names
 # To make the output more readable and to avoid confusion,
 # we define short name for each probe/matlab file using the `probe_names` dictionary.
+# If this dictionary is not defined, the names will be set to `proA` and `proB` by default.
 
 # %%
 probe_names = {
@@ -79,11 +82,15 @@ probe_names = {
 }
 
 # %% [markdown]
-# ## Run analysis
+# ### Run analysis
 #
 # We finally run the analysis using the `analyze_interactions` function.
 # We define an output folder with `out_dir` where the results will be stored.
 # This way, we try different parameter sets for the same data.
+#
+# Because the matlab files are in the `Z` unit structure, we pass the `ZProbe` class as the `probe_class` argument.
+# We also pass the `lick_group` argument to this class via `probe_kwargs`.
+#
 
 # %%
 # define parameters (see example notebook for more details)
@@ -93,7 +100,7 @@ params = {
     'rate_trg': (1, None),
     'spike_width_src': (None, None), 
     'spike_width_trg': (  .5, None),
-    'perc_trials': 0.9,             
+    'trial_overlap': 0.9,             
     'first_lick' : (None, None),
     'type_incl': [ 'l_n', ],
     'scoring': 'r2',
@@ -111,14 +118,61 @@ epochs = {
 }
 
 # run analysis
-bh.analyze_interactions(p_dirs, params, epochs, probe_names, out_dir='analysis/some_parameters')
+bh.analyze_interactions_probes(
+    p_dirs=p_dirs,
+    params=params,
+    probe_class=ZProbe,
+    probe_kwargs={'lick_groups': params['lick_groups']},
+    epochs=epochs,
+    probe_names=probe_names,
+    out_dir='analysis/some_parameters'
+)
 
 # %% [markdown]
+# ### Y unit structure
+# Alternatively, we can analyze the interactions between probes for data stored in the `Y` unit structure.
+# The procedure is the same as above, with the following differences:
+# - we pass the `YProbe` class as the `probe_class` argument, instead of `ZProbe`
+# - we do not pass the `lick_group` argument to the `probe_kwargs` dictionary, because `YProbe` does not use this
+# - we removed all lick-related entries from `epochs` and `params`
+# - we have not defined the `probe_names` dictionary, so the default names `proA` and `proB` will be used
+
+# %%
+p_dirs = [ Path(r'C:\temp\trip_ephys') ]
+
+params = {
+    'bin_size': 0.2,
+    'rate_src': (1, None), 
+    'rate_trg': (1, None),
+    'spike_width_src': (None, None), 
+    'spike_width_trg': (  .5, None),
+    'trial_overlap': 0.9,             
+    'type_incl': [ 'l_n', ],
+    'scoring': 'r2',
+    'subtract_baseline': True,
+    'min_units_src': 5,
+}
+epochs = {
+    'all'       : (None, None, 'cue'), 
+    'pre_cue'   : (-.6,  .0,   'cue'),
+    'post_cue1' : ( .0,  .6,   'cue'),
+    'post_cue2' : ( .6, 1.2,   'cue'),
+}
+
+# run analysis
+bh.analyze_interactions_probes(p_dirs=p_dirs,
+                        params=params,
+                        probe=YProbe,
+                        epochs=epochs,
+                        out_dir='analysis/some_parameters')
+
+# %% [markdown]
+# ### Analyzing the output
 # The output folder contains four folders containing the different predictions of activity:
-# - `regionA_regionB`: neurons in region A -> region B
-# - `regionB_regionA`: neurons in region B -> region A
-# - `regionA`: subset of neurons in region A ->  region A
-# - `regionB`: subset of neurons in region B ->  region B
+# - `proA_proB`: neurons in probe A -> probe B
+# - `proB_proA`: neurons in probe B -> probe A
+# - `proA`: subset of neurons in probe A ->  probe A
+# - `proB`: subset of neurons in probe B ->  probe B
 #
 # Each of these folders contains the following files:
 # - `params.json`: the `params` dictionary used for the analysis
@@ -135,8 +189,51 @@ bh.analyze_interactions(p_dirs, params, epochs, probe_names, out_dir='analysis/s
 #
 # See `src.batch_helpers.processing_wrapper` for more details how the analysis is run.
 #
+# ## Interaction between areas
+# Here we are loading multiple probes and merge them into a single recording object (see `example.py` for details).
+# We define a list of folders as `p_dirs` each of which contain multiple matlab files from the same session.
+# We also need to define two sets of area codes in the `params` dictionary.
+#
+# Note that area codes are only available in the `Y` unit structure, not in `Z`.
+
+# %%
+p_dirs = [ Path(r'C:\temp\trip_ephys') ]
+p_dirs
+
+params = {
+    'bin_size': 0.2,
+    'rate_src': (1, None), 
+    'rate_trg': (1, None),
+    'spike_width_src': (None, None), 
+    'spike_width_trg': (  .5, None),
+    'trial_overlap': 0.9,             
+    'type_incl': [ 'l_n', ],
+    'scoring': 'r2',
+    'subtract_baseline': True,
+    'min_units_src': 5,
+    'area_code_A': [7, 8],
+    'area_code_B': [3, 17],
+}
+epochs = {
+    'all'       : (None, None, 'cue'), 
+    'pre_cue'   : (-.6,  .0,   'cue'),
+    'post_cue1' : ( .0,  .6,   'cue'),
+    'post_cue2' : ( .6, 1.2,   'cue'),
+}
+
+bh.analyze_interactions_areas(
+    p_dirs=p_dirs,
+    params=params,
+    probe_class=YProbe,
+    epochs=epochs,
+    out_dir='analysis/default_params_A_B'
+)
+
+
+# %% [markdown]
+#
 # ## Different parameter sets
-# We can easily run the analysis with different parameters and 
+# We can easily run the analyses described above with different parameters and 
 # save the results in different folders.
 #
 # Here, we load two parameter sets that we defined in the file `batch_parameter_sets.yml`.
@@ -148,10 +245,27 @@ bh.analyze_interactions(p_dirs, params, epochs, probe_names, out_dir='analysis/s
 # load parameter sets
 param_sets = bh.load_yml('./batch_parameter_sets.yml')
 
+# use the same epochs for all parameter sets
+epochs = {
+    'all'       : (None, None, 'cue'), 
+    'pre_cue'   : (-.6,  .0,   'cue'),
+    'post_cue1' : ( .0,  .6,   'cue'),
+    'post_cue2' : ( .6, 1.2,   'cue'),
+    'pre_lick'  : (-.6,  .0,  'lick'),
+    'post_lick' : ( .0,  .6,  'lick'),
+}
+
 # loop over parameter sets
 for name, params in param_sets.items():
     print(f'>>>> now running parameter set {name}')
-    bh.analyze_interactions(p_dirs, params, epochs, probe_names, out_dir=f'analysis/{name}')
+    bh.analyze_interactions(
+        p_dirs=p_dirs,
+        params=params,
+        probe=ZProbe,
+        epochs=epochs,
+        probe_names=probe_names,
+        out_dir=f'analysis/{name}'
+    )
 
 
 # %% [markdown]
