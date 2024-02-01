@@ -22,15 +22,15 @@ for each script file in the `scripts` folder.
 
 ## Installation
 ```bash
+# get source code
+git clone https://github.com/bidaye-lab/communication_subspace
+cd communication_subspace
+
 # create conda environment with necessary dependencies
 conda env create -n communication_subspace -f environment.yml
 conda activate communication_subspace
 
-# get source code
-git clone https://github.com/bidaye-lab/communication_subspace
-
 # install code as local local python module
-cd communication_subspace
 pip install -e .
 
 # convert scripts to notebooks
