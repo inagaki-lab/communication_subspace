@@ -6,7 +6,7 @@ params_1:
     type_incl: [ 'l_n', ]
     rate_src: [1, null]
     rate_trg: [1, null]
-    perc_trials: 0.9
+    trial_overlap: 0.9
     scoring: r2
     subtract_baseline: True
     min_units_src: 5
@@ -19,7 +19,7 @@ params_2:
     type_incl: [ l_n, ]
     rate_src: [1, null]
     rate_trg: [1, null]
-    perc_trials: 0.9
+    trial_overlap: 0.9
     scoring: r2
     subtract_baseline: False
     min_units_src: 5

@@ -2,340 +2,554 @@
 import pandas as pd
 import numpy as np
 
-from scipy.io import loadmat
-from pathlib import Path
-
-import matplotlib.pylab as plt
-plt.rcParams['savefig.facecolor'] = 'w'
+from os.path import commonprefix
 
 class Recording:
-    '''Class to load data for a single recording stored in a matlab file
+    '''Class to merge and analyze data from multiple probes'''
 
-    Attributes
-    ----------
-    df_trl : pandas.DataFrame 
-        Trial info, see self._load_trial_info
-    df_unt : pandas.DataFrame 
-        unit info, see self._load_unit_info
-    df_spk : pandas.DataFrame 
-        spike times, see self._load_spike_times
-    trials : set of int
-        indices for available trials (1-based)
-    units : set of int
-        indices for ailable unit/neuron (1-based)
-
-    Notes
-    -----
-    The pandas.DataFrames are stored in the temporary folder `tmp_dir` and
-    are loaded from disk if they exist and `force_overwrite` is False.
-    '''
-
-    def __init__(self, matlab_file, tmp_dir='tmp_data', force_overwrite=False):
-        '''Load data from matlab file and store in pandas.DataFrames
+    def __init__(self, probes):
+        '''Merge data from multiple BaseProbe instances
 
         Parameters
         ----------
-        matlab_file : path-like
-            Path to matlab data file
-        tmp_dir : path-like, optional
-            Name of the folder to store processed data, by default 'tmp'
-            Folder is created in the same folder as `matlab_file` and a subfolder
-            with the name of the session is created inside `tmp_dir`.
-        force_overwrite : bool, optional
-            If True, do not load data from `tmp_dir`, by default False
+        probes : dict of str:BaseProbe
+            Dict with probe names as keys and probe instances as values
+
+        Raises
+        ------
+        ValueError
+            If probes are not of the same type or if trial info dataframes do not match
+        
+        Attributes
+        ----------
+        df_trl : pandas.DataFrame
+            Trial info
+        df_unt : pandas.DataFrame
+            Unit info with 'probe' column added
+        df_spk : pandas.DataFrame
+            Spike times with 'probe' column added
+        df_bin : pandas.DataFrame
+            Binned spike times with MultiIndex columns (probe, unit)
+        probe_tmp_dir : dict of Path
+            Temporary directories for each probe
+        session : str
+            Session name derived from probe basenames
         '''
 
-        self.path_mat = Path(matlab_file)
-        self.force_overwrite = force_overwrite
+        probe_names = list(probes.keys())
 
-        # define session name
-        self.session = self.path_mat.with_suffix('').name
-        
-        # temporary folder, used to recycle precalculated data
-        self._path_tmp = self.path_mat.parent / '{}/{}'.format(tmp_dir, self.session)
-        self._path_tmp.mkdir(exist_ok=True, parents=True)
+        l_unt, l_spk, l_bin = [], [], []
+        probe_0 = probes[probe_names[0]]
 
-        # load trial info
-        self.path_trl = self._path_tmp / 'trl.parquet'
-        self.df_trl = self._assign_df(self.path_trl, self._load_trial_info)
-        self.trials = { *self.df_trl.loc[:, 'trial'] }
+        for name, probe in probes.items():
 
-        # load unit info
-        self.path_unt = self._path_tmp / 'unt.parquet'
-        self.df_unt = self._assign_df(self.path_unt, self._load_unit_info)
-        self.units = { *self.df_unt.loc[:, 'unit'] }
+            if not isinstance(probe, type(probe_0)):
+                raise ValueError(f'Can only merge recordings of type {type(self)}')
+            if not probe.df_trl.equals(probe_0.df_trl):
+                raise ValueError('Trial info dataframes do not match (rec.df_trl)')
+            
+            df_unt = probe.df_unt.copy()
+            df_unt.loc[:, 'probe'] = name
+            l_unt.append(df_unt)
 
-        # load spike times
-        self.path_spk = self._path_tmp / 'spk.parquet'
-        self.df_spk = self._assign_df(self.path_spk, self._load_spike_times)
+            df_spk = probe.df_spk.copy()
+            df_spk.loc[:, 'probe'] = name
+            l_spk.append(df_spk)
 
+            df_bin = probe.df_bin.copy()
+            df_bin.columns = pd.MultiIndex.from_tuples([(name, unit) for unit in df_bin.columns])
+            l_bin.append(df_bin)
 
-    def _assign_df(self, path, function, function_args=dict()):
-        '''Load data from `path` if it exists, otherwise run `function` and save to `path`.
+        df_unt = pd.concat(l_unt, ignore_index=True)
+        df_spk = pd.concat(l_spk, ignore_index=True)
+        df_bin = pd.concat(l_bin, axis=1)
 
-        Can handle storing and loading pandas.DataFrame in `.parquet` and `.hdf` format.
+        # update attributes if merge is successful
+        self.df_unt, self.df_spk, self.df_bin = df_unt, df_spk, df_bin
+        self.df_trl = probe_0.df_trl
+
+        self.probe_tmp_dir = { name: probe._path_tmp for name, probe in probes.items() }
+
+        # new session name: either common prefix or concatenation
+        pref = commonprefix([ probe.basename for probe in probes.values() ])
+        self.session = pref if pref else '+'.join(probes.values())
+
+        # unset attributes that are not valid for merged recordings
+        self._matlab = None
+        del self._matlab
+
+    def _filter_trial_types(self, type_incl):
+        '''Filter trials based on trial type
+
+        Adds a column `incl_trial_type` to `self.df_trl` with boolean values.
 
         Parameters
         ----------
-        path : path-like
-            Path to file to load or save. Must have a known extension.
-        function : callable
-            Function to run if `path` does not exist. Must return a pandas.DataFrame
-        function_args : dict, optional
-            Additional arguments to pass to `function`, by default dict()
+        type_incl : list of str
+            Keep trials in which `trial_type` start with `str`
+        '''
+        
+        # filter based on trial type
+        tt = self.df_trl.loc[:, 'trial_type']
+
+        if type_incl:
+            # only trials starting with strings defined in type_incl
+            l_ds = [ tt.str.startswith(s) for s in type_incl ]
+            df = pd.concat(l_ds, axis=1)
+            m_tt = df.any(axis=1)
+
+        else:
+            # all trials
+            m_tt = tt == tt
+        
+        self.df_trl.loc[~m_tt, 'incl_trial_type'] = False
+        self.df_trl.loc[m_tt, 'incl_trial_type'] = True
+
+
+
+    def _filter_first_lick_time(self, first_lick):
+        '''Filter trials based on first lick time.
+
+        Adds a column `incl_first_lick` to `self.df_trl` with boolean values.
+
+        Parameters
+        ----------
+        first_lick : tuple
+            Keep trials in which lick time is between `first_lick[0]` and `first_lick[1]`.
+            If None, no upper/lower limit is applied.
+        '''
+        
+        # filter based on lick time
+        lck_min, lck_max = first_lick
+        
+        lck = self.df_trl.loc[:, 'dt_lck']
+        m_lck = lck == lck # DataSeries with all True for not nan
+
+        if lck_min is not None:
+            m = lck > lck_min
+            m_lck = m_lck & m
+        
+        if lck_max is not None:
+            m = lck < lck_max
+            m_lck = m_lck & m
+        
+        self.df_trl.loc[~m_lck, 'incl_first_lick'] = False
+        self.df_trl.loc[m_lck, 'incl_first_lick'] = True
+
+    def _filter_firing_rate(self, r_min, r_max, df_bin=None):
+        '''Filter units based on firing rate.
+
+        Adds a column `incl_firing_rate` to `self.df_unt` with boolean values.
+
+        Parameters
+        ----------
+        r_min : float or None
+            Min firing rate in Hz. If None, no lower limit, by default None
+        r_max : float or None
+            Max firing rate in Hz. If None, no upper limit, by default None
+        df_bin : pandas.DataFrame, optional
+            If not None, only keep units in `df_bin`, by default None
+        '''
+
+        # get mapping from trial to duration
+        df = self.df_trl.loc[:, ['trial', 'dt0', 'dtf']].copy()
+        df.loc[:, 'dur'] = df.loc[:, 'dtf'] - df.loc[:, 'dt0']
+        ds = df.set_index('trial').loc[:, 'dur']
+
+        # get duration for each unit
+        d = dict()
+        for p, u, f, l in self.df_unt.loc[:, ['probe', 'unit', 'first_trial', 'last_trial']].itertuples(index=False):
+            dur = np.nansum([ ds.loc[i] for i in range(f, l+1) ])
+            d[(p, u)] = dur
+
+        # number of spikes per unit
+        df = self.df_spk.groupby(['probe', 'unit'], as_index=False).size()
+
+        # average firing rate
+        df.loc[:, 'rate'] = df.loc[:, 'size'] / df.loc[:, ['probe', 'unit']].apply(lambda x: d[(x[0], x[1])], axis=1)
+
+        # select units based on rate threshold
+        rate = df.loc[:, 'rate']
+        m = rate == rate # DataSeries with all `True` if not nan
+
+        if r_min is not None:
+            m_min = rate > r_min
+            m = m & m_min
+
+        if r_max is not None:
+            m_max = rate < r_max
+            m = m & m_max
+
+        if df_bin is not None:
+            # if df_bin, only set to true for units in df_bin
+            m_unt = self.df_unt.set_index(['probe', 'unit']).index.isin(df_bin.columns)
+            m = m & m_unt
+
+        self.df_unt.loc[m, 'incl_firing_rate'] = True
+
+
+    def _filter_spike_widths(self, sw_min, sw_max, df_bin=None):
+        '''Filter units based on spike width.
+
+        Adds a column `incl_spike_width` to `self.df_unt` with boolean values.
+
+        Parameters
+        ----------
+        sw_min : float or None, optional
+            Min spike width in ms. If None, no lower limit, by default None
+        sw_max : float or None, optional
+            Max spike width in ms. If None, no upper limit, by default None
+        df_bin : pandas.DataFrame, optional
+            If not None, only keep units in `df_bin`, by default None
+        Returns
+        '''
+        
+        sw = self.df_unt.loc[:, 'spike_width']
+        m = sw == sw # DataSeries with all `True` if not nan
+
+        if sw_min is not None:
+            m_min = sw > sw_min
+            m = m & m_min
+
+        if sw_max is not None:
+            m_max = sw < sw_max
+            m = m & m_max
+
+        if df_bin is not None:
+            # if df_bin, only set to true for units in df_bin
+            m_unt = self.df_unt.set_index(['probe', 'unit']).index.isin(df_bin.columns)
+            m = m & m_unt
+
+        self.df_unt.loc[m, 'incl_spike_width'] = True
+
+    def _filter_trial_overlap(self, thresh):
+        '''Filter units based on trial overlap.
+
+        Adds columns `incl_trial_overlap` to `self.df_unt` and `self.df_trl`
+        with boolean values.
+
+        Because not all units cover the whole recording,
+        dropping units can increase the total time overlap.
+        Here, units with the lowest overlap are dropped 
+        iteratively until the total overlap is just above `thresh`.
+
+        Parameters
+        ----------
+        thresh : float, optional
+            Fraction of trials to keep
+        '''
+
+        m = self.df_unt.loc[:, ['incl_spike_width', 'incl_firing_rate']].all(axis=1)
+        df_unt = self.df_unt.loc[m, :]
+        all_unts = df_unt.loc[: ,['probe', 'unit']]
+
+        # create valid trial matrix: trial x units
+        trl_max = df_unt.loc[:, 'last_trial'].max()
+        n_unt = len(all_unts)
+
+        x = np.zeros((trl_max, n_unt))
+        for i in range(n_unt):
+            first, last = df_unt.iloc[i, :].loc[['first_trial', 'last_trial']].astype(int)
+            x[first - 1 : last - 1, i] = 1
+
+        x = x.astype(bool)
+
+        # sort units by trial overlap
+        idx, tot = [], [] # `idx` is index in `all_unts` and `tot` is trial overlap before removing this unit
+        for _ in range(n_unt):
+            l = np.all(x, axis=1).sum()
+            tot.append(l)
+            i = np.argmin(x.sum(axis=0))
+            idx.append(i)
+            x[:, i] = True
+
+        all_unts = all_unts.iloc[idx, :]
+        tot = np.array(tot)
+        tot = tot / trl_max # trial overlap in %
+
+        # select based on overlap threshold
+        m = tot > thresh
+        unts = all_unts.loc[m, :]
+
+        # choose units to keep
+        self.df_unt.loc[:, 'incl_trial_overlap'] = False
+        self.df_unt.loc[unts.index, 'incl_trial_overlap'] = True
+
+        # choose trials to keep
+        trl_min = self.df_unt.loc[unts.index, 'first_trial'].min()
+        trl_max = self.df_unt.loc[unts.index, 'last_trial'].max()
+        if (trl_min != trl_min) or (trl_max != trl_max):
+            trls = set()
+        else:
+            trls = { *range(trl_min, trl_max + 1) }
+        self.df_trl.loc[:, 'incl_trial_overlap'] = self.df_trl.loc[:, 'trial'].isin(trls)
+
+    def _filter_good_units(self, only_good):
+        '''Filter units based on good_unit column.
+
+        Adds columns `incl_good_unit` to `self.df_unt` with boolean values.
+
+        Parameters
+        ----------
+        only_good : bool
+            If True, only keep units with `good_unit` set to 1
+        '''
+
+        if only_good:
+            self.df_unt.loc[:, 'incl_good_unit'] = self.df_unt.loc[:, 'good_unit'] == 1
+        else:
+            self.df_unt.loc[:, 'incl_good_unit'] = True
+
+    def _subtract_baseline(self, df_bin, interval=(-2.0, 0.0)):
+        '''Subtract baseline firing rate from binned spikes.
+
+        Returns new dataframe with same basis as `df_bin`, 
+        but with baseline subtracted.
+
+        Subtracts the mean firing rate during `interval` from
+        each unit and trial.
+
+        Parameters
+        ----------
+        df_bin : pandas.DataFrame
+            Binned spikes
+        interval : tuple of float, optional
+            Interval for baseline calculation in seconds relative to cue, by default (-2, 0)
 
         Returns
         -------
-        df : pandas.DataFrame
-            Data loaded from `path` or returned by `function`
+        df_bin0 : pandas.DataFrame
+            Binned spikes with baseline subtracted
+        '''
+
+        # select only spikes within `interval`
+        t0, tf = interval
+        t = self.df_spk.loc[:, 't']
+        m = (t < tf) & ( t > t0 )
+        df = self.df_spk.loc[m]
+
+        # number of spikes per unit per trial
+        df_n = df.groupby(['probe', 'unit', 'trial']).size()
+        
+        # convert to rate
+        dt = tf - t0
+        df_r = df_n / dt
+
+        # convert to pivot table
+        df_r = df_r.reset_index()
+        df_r = pd.pivot_table(data=df_r, index='trial', columns=['probe', 'unit'], values=0)
+        # nan implies 0 Hz 
+        df_r = df_r.fillna(0)
+
+        # match structure with `df_bin`
+        idx = np.unique(df_bin.index.get_level_values(0))
+        cols = df_bin.columns
+        df_r = df_r.loc[ idx, cols]
+
+        # subtract
+        df_bin0 = df_bin.subtract(df_r)
+
+        return df_bin0
+        
+
+    def _filter_data(self, params, df_src, df_trg):
+
+        
+        # create at least one column per df_unt and df_trl
+        self.df_unt.loc[:, 'incl_all'] = True
+        self.df_trl.loc[:, 'incl_all'] = True
+
+        # filter trials
+        if 'type_incl' in params:
+            self._filter_trial_types(params['type_incl'])
+        if 'first_lick' in params:
+            self._filter_first_lick_time(params['first_lick'])
+
+        # filter units        
+        self.df_unt.loc[:, 'incl_spike_width'] = False
+        if 'spike_width_src' in params:
+            self._filter_spike_widths(*params['spike_width_src'], df_src)
+        if 'spike_width_trg' in params:
+            self._filter_spike_widths(*params['spike_width_trg'], df_trg)
+
+        self.df_unt.loc[:, 'incl_firing_rate'] = False
+        if 'rate_src' in params:
+            self._filter_firing_rate(*params['rate_src'], df_src)
+        if 'rate_trg' in params:
+            self._filter_firing_rate(*params['rate_trg'], df_trg)
+
+        if 'only_good' in params:
+            self._filter_good_units(params['only_good'])
+
+        # # filter trials and units
+        # if 'trial_overlap' in params:
+        #     self._filter_trial_overlap(params['trial_overlap'])
+
+        # select trials left after filtering
+        cols_incl = self.df_trl.columns.str.startswith('incl_')
+        df_incl = self.df_trl.loc[:, cols_incl]
+        idx_incl = df_incl.all(axis=1)
+        self.df_trl.loc[:, 'incl_all'] = idx_incl
+        trl_incl = self.df_trl.loc[idx_incl, 'trial']
+
+        # select units left after filtering
+        cols_incl = self.df_unt.columns.str.startswith('incl_')
+        df_incl = self.df_unt.loc[:, cols_incl]
+        idx_incl = df_incl.all(axis=1)
+        self.df_unt.loc[:, 'incl_all'] = idx_incl
+        unts_incl = self.df_unt.loc[idx_incl, ['probe', 'unit']]
+        unts_incl_multi = unts_incl.set_index(['probe', 'unit']).index
+
+        unts_incl_src = df_src.columns.isin(unts_incl_multi)
+        unts_incl_trg = df_trg.columns.isin(unts_incl_multi)
+
+        df_src = df_src.loc[ trl_incl, unts_incl_src ]
+        df_trg = df_trg.loc[ trl_incl, unts_incl_trg ]
+
+        # discard rows with only nan in both source and targets
+        m = df_src.isnull().all(axis=1) & df_trg.isnull().all(axis=1)
+        df_src = df_src.loc[ ~m ]
+        df_trg = df_trg.loc[ ~m ]
+
+        # fill all remaining nan with 0
+        df_src = df_src.fillna(0)
+        df_trg = df_trg.fillna(0)
+
+        # subtract baseline
+        if params.get('subtract_baseline', False):
+            df_src = self._subtract_baseline(df_src)
+            df_trg = self._subtract_baseline(df_trg)
+
+        return df_src, df_trg
+
+
+    def select_data_probes(self, probes_src, probes_trg, params):
+
+        if not isinstance(probes_src, list):
+            probes_src = [ probes_src ]
+        if not isinstance(probes_trg, list):
+            probes_trg = [ probes_trg ]
+
+        # select source and target units
+        if set(probes_src) == set(probes_trg):
+            # if source and target probes are the same 
+            # select random subset of units from that probe(s)
+            df_tot = self.df_bin.loc[:, probes_src]
+
+            unts = [ *df_tot.columns ]
+            rng = np.random.default_rng(seed=42)
+            rng.shuffle(unts)
+            s = len(unts) // 2
+            unt_src, unt_trg = unts[:-s], unts[-s:]
+
+            df_src = df_tot.loc[:, unt_src]
+            df_trg = df_tot.loc[:, unt_trg]
+        elif set(probes_src) & set(probes_trg):
+            raise ValueError('Some but not all probe(s) are both source and target.')
+        else:
+            df_src = self.df_bin.loc[:, probes_src]
+            df_trg = self.df_bin.loc[:, probes_trg]
+
+        # apply filter
+        df_src, df_trg = self._filter_data(params, df_src, df_trg)
+
+        return df_src, df_trg
+    
+    def _select_units_area_code(self, area_code, df_bin):
+
+
+        # select only units with given area code 
+        unt = self.df_unt.loc[:, 'area_code'].isin(area_code)
+        unt_idx = self.df_unt.loc[unt, :].set_index(['probe', 'unit']).index
+        m = df_bin.columns.isin(unt_idx)
+        df = df_bin.loc[:, m]
+
+        return df
+
+    def select_data_area_code(self, area_code_src, area_code_trg, params):
+
+        if not isinstance(area_code_src, list):
+            area_code_src = [ area_code_src ]
+        if not isinstance(area_code_trg, list):
+            area_code_trg = [ area_code_trg ]
+
+        # select source and target units
+        if area_code_src == area_code_trg:
+            # if source and target area codes are the same 
+            # select random subset of units from that area code(s)
+            df_tot = self._select_units_area_code(area_code_src, self.df_bin)
+
+            unts = [ *df_tot.columns ]
+            rng = np.random.default_rng(seed=42)
+            rng.shuffle(unts)
+            s = len(unts) // 2
+            unt_src, unt_trg = unts[:-s], unts[-s:]
+
+            df_src = df_tot.loc[:, unt_src]
+            df_trg = df_tot.loc[:, unt_trg]
+
+        elif set(area_code_src) & set(area_code_trg):
+            raise ValueError('Some but not all area code(s) are both source and target.')
+        else:
+            # select only units with given area code 
+            df_src = self._select_units_area_code(area_code_src, self.df_bin)
+            df_trg = self._select_units_area_code(area_code_trg, self.df_bin)
+
+        # apply filter
+        df_src, df_trg = self._filter_data(params, df_src, df_trg)
+
+        return df_src, df_trg
+
+    def select_epoch(self, df_bin, epoch):
+        '''Select only bins within `epoch` from binned spikes.
+
+        Returns new dataframe with only bins within `epoch`.
+
+        Parameters
+        ----------
+        df_bin : pandas.DataFrame
+            Binned spikes
+        epoch : tuple
+            Epoch defined as `(t0, tf, align)`, where `t0` and `tf` are beginning and end
+            relative to `align` (cue or lick) in seconds.
+            `t0` and `tf` can be None (no limit) if `align == 'cue'`.
+
+        Returns
+        -------
+        df_epo : pandas.DataFrame
+            Binned spikes within `epoch`
 
         Raises
         ------
         NotImplementedError
-            If `path` does not have a known extension
+            If `align` is not 'cue' or 'lick'.
         '''
 
-        if path.suffix == '.parquet':
-            read = lambda path: pd.read_parquet(path)
-            write = lambda df, path: df.to_parquet(path, compression='brotli')
+        t0, tf, align = epoch
 
-        elif path.suffix == '.hdf':
-            read = lambda path: pd.read_hdf(path)
-            write = lambda df, path: df.to_hdf(path, key='df', mode='w', complevel=9, complib='bzip2')
+        if align == 'cue':
+            # bins are already aligned to cue
+            df_epo = df_bin.loc[ (slice(None), slice(t0, tf)), :].copy() # copy necessary?
+
+        elif align == 'lick':
+
+            # check if df_trl has been passed
+            assert self.df_trl is not None, f'Need df_trl when aligning to {align}'
+            
+            # map trial to lick time ('dt_lck' is aligned to cue)
+            trl2lck = { k: v for k, v in self.df_trl.loc[:, ['trial', 'dt_lck']].itertuples(index=False)}
+
+            # cycle trhough trials in df_bin
+            dfs = [] # collect relevant dataframes here
+            for trl in np.unique(df_bin.index.get_level_values(0)):
+                t_lck = trl2lck[trl]
+                df = df_bin.loc[ ([trl], slice(t0 + t_lck, tf + t_lck)), : ]
+                dfs.append(df)
+
+            # combine snippets again
+            df_epo = pd.concat(dfs)
 
         else:
-            raise NotImplementedError(f'Does not know how to handle `{path.suffix}` (only implemented `.parquet` and `.hdf`)')
+            raise NotImplementedError(f'Do not know how to align to {align}')
 
-        if path.is_file() and not self.force_overwrite:
-            df = read(path)
-        else:
-            df = function(**function_args)
-            write(df, path)
-
-        return df
-
-
-    def _load_matlab(self):
-        '''Load and return matlab file with `scipy.io.loadmat`, if not already loaded'''
-        
-        try: # check if matlab file has been loaded
-            self._matlab
-        except AttributeError: # if not, load
-            self._matlab = loadmat(self.path_mat, squeeze_me=True, struct_as_record=False)
-
-        return self._matlab
-
-
-    def _get_trial_range(self):
-        '''Define available trial range
-         
-        Based on Trial_info.Trial_range_to_analyze in matlab file
-
-        Currently, the trial range is limited to 1020 trials.
-
-        Returns
-        -------
-        trl_min : int
-            Index for first available trial
-        trl_max : int
-            Index for last available trial
-        '''
-
-        m = self._load_matlab()
-
-        trl_min, trl_max = np.inf, -np.inf
-
-        for u in m['unit']:
-            trl_i, trl_f = vars(vars(u)['Trial_info'])['Trial_range_to_analyze']
-            trl_min = np.min([trl_min, trl_i])
-            trl_max = np.max([trl_max, trl_f])
-            
-        trl_max = np.min([trl_max, 1020]) # TODO
-        trl_min, trl_max = int(trl_min), int(trl_max)
-        
-        return trl_min, trl_max
-
-
-    def _load_trial_info(self, dt=2):
-        '''Load trial info from matlab file
-
-        For each trial, the following information is stored:
-        - `trial` : trial index
-        - `t_pre`, `t_cue`, `t_lck` : time of pre-sample, cue and first lick
-        in seconds relative to trigger onset
-        -  `dt_pre`, `dt_cue`, `dt_lck` : time of pre-sample, cue and first lick
-        in seconds relative to cue onset
-        - `dt0`, `dtf` : trial start and end time in seconds relative to cue onset
-        - `trial_type` : trial type as defined in `Behavior.stim_type_name` in matlab file
-        - `response` : response type as defined in `Behavior.Trial_types_of_response` in matlab file
-        - `response_id` : response type as defined in `Behavior.Trial_types_of_response_vector` in matlab file
-
-        Parameters
-        ----------
-        dt : float, optional
-            Time in seconds before cue and after first lick, by default 2
-
-        Returns
-        -------
-        df : pandas.DataFrame
-            Trial info
-        '''
-
-        m = self._load_matlab()
-        beh = vars(vars(m['unit'][0])['Behavior'])
-        
-        # time events aligned to trigger
-        t_cue = beh['Sample_start'] # aligned to trigger
-        t_pre = beh['PreSample'] # aligned to trigger
-        t_lck = beh['First_lick'] + t_cue # First_lick aligned to cue 
-
-        # aligned to cue
-        dt_pre = t_pre - t_cue
-        dt_cue = 0
-        dt_lck = t_lck - t_cue
-
-        # trial type
-        typ = beh['stim_type_name']
-
-        # response types
-        i_res = beh['Trial_types_of_response_vector']
-        res = beh['Trial_types_of_response']
-        
-        # trial index
-        trl = np.arange(1, len(t_pre) + 1)
-
-        df = pd.DataFrame(data={
-            'trial'         : trl,            
-            't_pre'         : t_pre,
-            't_cue'         : t_cue,
-            't_lck'         : t_lck,
-            'dt_pre'        : dt_pre,
-            'dt_cue'        : dt_cue,
-            'dt_lck'        : dt_lck,
-            'dt0'           : -dt,
-            'dtf'           : dt_lck + dt,
-            'trial_type'    : typ,
-            'response'      : res,
-            'response_id'   : i_res,
-        })
-
-        return df
-
-
-    def _load_unit_info(self):
-        '''Load unit info from matlab file
-
-        For each unit, the following information is stored:
-        - `unit` : unit index (1-based, as in matlab file)
-        - `spike_width` : spike width in ms
-        - `first_trial`, `last_trial` : first and last available trial
-        as defined in `unit.Trial_info.Trial_range_to_analyze` in matlab file
-
-        Returns
-        -------
-        df : pandas.DataFrame
-            Unit info
-        '''
-        
-        m = self._load_matlab()
-
-        df = pd.DataFrame()
-
-        for i, u in enumerate(m['unit']):
-
-            ti, tf = vars(vars(u)['Trial_info'])['Trial_range_to_analyze']
-            tf = np.min([1020, tf]) # limit to 1020
-
-            ws = vars(u)['SpikeWidth'] 
-
-            d = pd.DataFrame(data={
-                'unit': i+1,
-                'spike_width': ws,
-                'first_trial': ti,
-                'last_trial': tf,
-            }, index=[i])
-            df = pd.concat([df, d])
-        
-        return df
-        
-
-    def _load_spike_times(self):
-        '''Load spike times from matlab file
-
-        Each row is a spike event with the following information:
-        - `t` : spike time in seconds relative to cue onset
-        - `unit` : unit index (1-based)
-        - `trial` : trial index (1-based)
-
-        Spike times are filtered based on `dt0` and `dtf` for each trial.
-        If either `dt0` or `dtf` is nan, all spikes are disregarded.
-
-        Only trials between `first_trial` and `last_trial` 
-        as defined in `self.df_unt` are considered.
-
-        Returns
-        -------
-        df : pandas.DataFrame
-            Spike times in long format
-        '''
-        
-        m = self._load_matlab()
-        
-        # combine SpikeTimes and Trial_idx_of_spike in one data frame
-        l = []
-        for i, u in enumerate(m['unit']):
-            t = vars(u)['SpikeTimes']
-            trl = vars(u)['Trial_idx_of_spike']
-            
-            d = pd.DataFrame(data={
-                't'     : t,
-                'unit'  : i + 1,
-                'trial' : trl,
-            })
-
-            l.append(d)
-
-        df = pd.concat(l, ignore_index=True)
-
-        # align spike times to precue and filter based on dt0 and dtf (see _load_trial_info)
-        gr = df.groupby('trial')
-        l = []
-        for i in self.df_trl.index:
-
-            # Note: if either dt_pre, dt0 or dtf is nan
-            # all spikes will be disregarded
-            # this ignores e.g. early lick or no cue trials
-            trl, dt_pre, dt0, dtf = self.df_trl.loc[ i, ['trial', 'dt_pre', 'dt0', 'dtf'] ]
-            
-            # unaligned spike times
-            d = gr.get_group(trl).copy()
-            t = d.loc[:, 't']
-
-            # spike times: aligned to PreSample
-            t += dt_pre # now everything is aligned to cue
-
-            # filter spike times based on dt0 and dtf
-            d = d.loc[ (t > dt0) & (t < dtf )]
-
-            l.append(d)
-        
-        df = pd.concat(l, ignore_index=True)
-    
-        # filter trials per unit according to defined trial ranges defined in df_trl
-        gr_unt = self.df_unt.groupby('unit')
-        l = []
-        for unt, d in df.groupby('unit'):
-
-            # get trial ranges per unit
-            row = gr_unt.get_group(unt)
-            first = row.loc[:, 'first_trial'].item()
-            last = row.loc[:, 'last_trial'].item()
-            trl_range = np.arange(first, last+1)
-
-            # only keep trials in trial range
-            d = d.loc[ d.loc[:, 'trial'].isin(trl_range) ]
-            l.append(d)
-
-        df = pd.concat(l, ignore_index=True)     
-
-        return df
+        return df_epo
