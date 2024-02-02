@@ -197,7 +197,7 @@ def select_data(rec1, params, rec2=None):
     if rec2 is not None:
 
         # store filtered units and trials
-        set_trial_unit_filters(rec1, 
+        set_trial_unit_filters(rec2, 
                             rate_range=params['rate_trg'], 
                             sw_range=params['spike_width_trg'], 
                             perc_trial=params['perc_trials'])
@@ -469,7 +469,7 @@ def filter_trials(df_unt, thresh=0.9):
     unts = { *all_unts[m] }
 
     df = df_unt.loc[ df_unt.loc[:, 'unit'].isin(unts) ]
-    trl_min = df.loc[:, 'first_trial'].max()
+    trl_min = df.loc[:, 'first_trial'].min()
     trl_max = df.loc[:, 'last_trial'].max()
     if (trl_min != trl_min) or (trl_max != trl_max):
         trls = set()
