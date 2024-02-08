@@ -23,7 +23,7 @@ class BaseProbe:
     are loaded from disk if they exist and `force_overwrite` is False.
     '''
 
-    def __init__(self, matlab_file, bin_size, tmp_dir='tmp_data', force_overwrite=False):
+    def __init__(self, matlab_file, bin_size, trial_groups=None, tmp_dir='tmp_data', force_overwrite=False):
         '''Load data from matlab file and store in pandas.DataFrames
 
         Parameters
@@ -32,6 +32,9 @@ class BaseProbe:
             Path to matlab data file
         bin_size : float
             Bin size in seconds
+        trial_groups : (str, list of float), optional
+            Name of the column to group by and list of times to construct intervals in seconds relative to cue
+            If None, intervals > 0 and < 0 are constructed, by default None
         tmp_dir : path-like, optional
             Name of the folder to store processed data, by default 'tmp'
             Folder is created in the same folder as `matlab_file` and a subfolder
@@ -54,6 +57,10 @@ class BaseProbe:
         # load trial info
         self._path_trl = self._path_tmp / 'trl.parquet'
         self.df_trl = self._assign_df(self._path_trl, self._load_trial_info)
+
+        # add time groups column
+        col, times = ('dt_cue', [0]) if trial_groups is None else trial_groups
+        self._add_trial_groups(col, times)
 
         # load unit info
         self._path_unt = self._path_tmp / 'unt.parquet'
@@ -293,15 +300,39 @@ class BaseProbe:
             columns=unts)
         
         return df    
+
+    def _add_trial_groups(self, col, times):
+        '''Add a column to self.df_trl that specifies the time group for each trial
+
+        Parameters
+        ----------
+        col : str
+            Name of the column in self.df_trl to group by
+        times : list of float
+            Times to construct intervals in seconds relative to cue
+        '''
+        
+        dt = self.df_trl.loc[:, col]
+        t0, tf = dt.min(), dt.max()
+
+        if t0 < times[0]:
+            times = [ t0 ] + times
+        if tf > times[-1]:
+            times = times + [ tf ]
+
+        labels = [ f'{t0:.1f} - {tf:.1f}' for t0, tf in zip(times[:-1], times[1:]) ]
+
+        grp = pd.cut(dt, bins=times, labels=labels, right=True, include_lowest=True)
+        grp = grp.cat.add_categories(['no'])
+        grp = grp.fillna('no')
+
+        self.df_trl.loc[:, f'{col}_group'] = grp
     
 class ZProbe(BaseProbe):
     
-    def __init__(self, *args, lick_groups=None, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
-        lick_groups = [ 0 ] if lick_groups is None else lick_groups
-        self._add_lick_group(lick_groups)
-
     def _load_trial_info(self, dt=2.0):
         '''Load trial info from matlab file
 
@@ -403,30 +434,6 @@ class ZProbe(BaseProbe):
         
         return df
     
-    def _add_lick_group(self, lick_groups):
-        '''Add a column to self.df_trl that specifies the lick group for each trial
-
-        Parameters
-        ----------
-        lick_groups : list of float
-            Lick times to construct intervals in seconds relative to cue
-        '''
-        
-        dt_lck = self.df_trl.loc[:, 'dt_lck']
-        t0, tf = dt_lck.min(), dt_lck.max()
-
-        if t0 < lick_groups[0]:
-            lick_groups = [ t0 ] + lick_groups
-        if tf > lick_groups[-1]:
-            lick_groups = lick_groups + [ tf ]
-
-        labels = [ f'{t0:.1f} - {tf:.1f}' for t0, tf in zip(lick_groups[:-1], lick_groups[1:]) ]
-
-        lck_grp = pd.cut(dt_lck, bins=lick_groups, labels=labels, right=True, include_lowest=True)
-        lck_grp = lck_grp.cat.add_categories(['no_lick'])
-        lck_grp = lck_grp.fillna('no_lick')
-
-        self.df_trl.loc[:, 'lick_group'] = lck_grp
     
 class YProbe(BaseProbe):
     

@@ -186,6 +186,7 @@ class Recording:
             m = m & m_unt
 
         self.df_unt.loc[m, 'incl_firing_rate'] = True
+        self.df_unt.loc[:, 'incl_firing_rate'].fillna(False, inplace=True)
 
 
     def _filter_spike_widths(self, sw_min, sw_max, df_bin=None):
@@ -221,6 +222,7 @@ class Recording:
             m = m & m_unt
 
         self.df_unt.loc[m, 'incl_spike_width'] = True
+        self.df_unt.loc[:, 'incl_spike_width'].fillna(False, inplace=True)
 
     def _filter_trial_overlap(self, thresh):
         '''Filter units based on trial overlap.
@@ -354,7 +356,12 @@ class Recording:
 
     def _filter_data(self, params, df_src, df_trg):
 
-        
+        # delete previous columns starting with 'incl_'
+        cols_incl = self.df_unt.columns.str.startswith('incl_')
+        self.df_unt = self.df_unt.loc[:, ~cols_incl]
+        cols_incl = self.df_trl.columns.str.startswith('incl_')
+        self.df_trl = self.df_trl.loc[:, ~cols_incl]
+
         # create at least one column per df_unt and df_trl
         self.df_unt.loc[:, 'incl_all'] = True
         self.df_trl.loc[:, 'incl_all'] = True
@@ -366,13 +373,11 @@ class Recording:
             self._filter_first_lick_time(params['first_lick'])
 
         # filter units        
-        self.df_unt.loc[:, 'incl_spike_width'] = False
         if 'spike_width_src' in params:
             self._filter_spike_widths(*params['spike_width_src'], df_src)
         if 'spike_width_trg' in params:
             self._filter_spike_widths(*params['spike_width_trg'], df_trg)
 
-        self.df_unt.loc[:, 'incl_firing_rate'] = False
         if 'rate_src' in params:
             self._filter_firing_rate(*params['rate_src'], df_src)
         if 'rate_trg' in params:
@@ -391,6 +396,7 @@ class Recording:
         idx_incl = df_incl.all(axis=1)
         self.df_trl.loc[:, 'incl_all'] = idx_incl
         trl_incl = self.df_trl.loc[idx_incl, 'trial']
+        trl_incl = trl_incl.loc[ trl_incl.isin(df_src.index.get_level_values(0))]
 
         # select units left after filtering
         cols_incl = self.df_unt.columns.str.startswith('incl_')
@@ -421,14 +427,17 @@ class Recording:
             df_trg = self._subtract_baseline(df_trg)
 
         return df_src, df_trg
-
-
+    
     def select_data_probes(self, probes_src, probes_trg, params):
 
-        if not isinstance(probes_src, list):
+        if isinstance(probes_src, str):
             probes_src = [ probes_src ]
-        if not isinstance(probes_trg, list):
+        else:
+            probes_src = list(probes_src)
+        if isinstance(probes_trg, str):
             probes_trg = [ probes_trg ]
+        else:
+            probes_trg = list(probes_trg)
 
         # select source and target units
         if set(probes_src) == set(probes_trg):
@@ -468,13 +477,17 @@ class Recording:
 
     def select_data_area_code(self, area_code_src, area_code_trg, params):
 
-        if not isinstance(area_code_src, list):
+        if isinstance(area_code_src, int):
             area_code_src = [ area_code_src ]
-        if not isinstance(area_code_trg, list):
+        else:
+            area_code_src = list(area_code_src)
+        if isinstance(area_code_trg, int):
             area_code_trg = [ area_code_trg ]
+        else:
+            area_code_trg = list(area_code_trg)
 
         # select source and target units
-        if area_code_src == area_code_trg:
+        if set(area_code_src) == set(area_code_trg):
             # if source and target area codes are the same 
             # select random subset of units from that area code(s)
             df_tot = self._select_units_area_code(area_code_src, self.df_bin)
@@ -553,3 +566,63 @@ class Recording:
             raise NotImplementedError(f'Do not know how to align to {align}')
 
         return df_epo
+    
+    def get_ramp_mode(self, df_bin, t1, t2, atol=1e-10):
+        '''Calculate ramp mode
+
+        For each trial, find the linear combination of units that
+        maximizes the difference between the mean activity `dt` before
+        the cue and the first lick.
+
+        Parameters
+        ----------
+        X : pandas.DataFrame
+            binned spikes
+        df_trl : pandas.DataFrame
+            trial information
+        dt : float, optional
+            Time interval in seconds, by default 0.2
+        atol : float, optional
+            Floating point tolerance for interval detection, by default 1e-10
+
+        Returns
+        -------
+        df_ramp : pandas.DataFrame
+            Ramp mode with columns trial, bin, ramp_mode (and optional: group)
+        '''
+
+        df = df_bin.reset_index()
+        i1 = pd.Series(index=df.index, data=False)
+        i2 = i1.copy()
+
+        al1, dti1, dtf1 = t1
+        al2, dti2, dtf2 = t2
+
+        for _, row in self.df_trl.iterrows():
+            trl, t_al1, t_al2 = row.loc[ ['trial', al1, al2] ]
+
+            m_trl = df.loc[:, 'trial'].eq(trl)
+            m1 = df.loc[:, 'bin'].between(t_al1 + dti1 - atol, t_al1 + dtf1 + atol, inclusive='both')
+            m2 = df.loc[:, 'bin'].between(t_al2 + dti2 - atol, t_al2 + dtf2 + atol, inclusive='both')
+
+            i1.loc[ m_trl & m1 ] = True
+            i2.loc[ m_trl & m2 ] = True
+        
+        df1 = df.loc[ i1, : ].drop(columns='bin', level=0)
+        df2 = df.loc[ i2, : ].drop(columns='bin', level=0)
+
+        mean1 = df1.groupby('trial').mean()
+        mean2 = df2.groupby('trial').mean()
+        diff = mean2 - mean1
+
+        ds_ramp = df_bin.multiply(diff).sum(axis=1)
+        ds_ramp.name = 'mode_activity'
+        df_ramp = ds_ramp.reset_index()
+
+        group_col = self.df_trl.columns.str.endswith('_group')
+        if group_col.sum() == 1:
+            col = self.df_trl.columns[ group_col ][0]
+            trl2grp = pd.Series(index=self.df_trl.loc[:, 'trial'].values, data=self.df_trl.loc[:, col].values)
+            df_ramp.loc[:, col] = df_ramp.loc[:, 'trial'].map(trl2grp).cat.remove_unused_categories()
+
+        return df_ramp

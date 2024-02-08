@@ -213,7 +213,7 @@ def plot_trial_infos(df_trl, path=""):
     _barplot_wrapper(df, "short", ax)
     ax.set_ylabel("Trial type")
 
-    if "lick_group" in df.columns:
+    if "dt_lck_group" in df.columns:
     
         ax = axarr[1]
         ax.set_title("trial response distribution")
@@ -229,7 +229,7 @@ def plot_trial_infos(df_trl, path=""):
 
         ax = axarr[3]
         ax.set_title("lick groups")
-        sns.histplot(data=df, x="lick_group", ax=ax, hue="response", multiple="stack", shrink=0.8)
+        sns.histplot(data=df, x="dt_lck_group", ax=ax, hue="response", multiple="stack", shrink=0.8)
     
     else:
         ax = axarr[1]
@@ -313,10 +313,10 @@ def plot_opt_ranks(df, path=""):
         fig.savefig(path)
         plt.close(fig)
 
-def plot_mode(df_mode, path=""):
+def plot_mode(df_mode, hue=None, path=""):
 
     fig, ax = plt.subplots()
-    sns.lineplot(ax=ax, data=df_mode, x='bin', y='mode_activity', hue='lick_group', )
+    sns.lineplot(ax=ax, data=df_mode, x='bin', y='mode_activity', hue=hue)
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Mode activity')
 

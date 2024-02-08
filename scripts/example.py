@@ -68,6 +68,9 @@ from src import (
 # - `min_units_src : int`\
 # Minimum number of units in source population.
 # This will skip the analysis in batch mode.
+# - `trial_groups: (str, list of float)`\
+# The first element (`str`) defines the column name in the `trial_info` table,
+# the second element (`list of float`) defines the time intervals used to group trials.
 #
 # Note that when defining intervals `(float, float)`, set one of the values to `None`
 # for no upper/lower limit.
@@ -77,8 +80,6 @@ from src import (
 # - `first_lick : (float, float)`\
 # Lick time filter in seconds applied to trials.
 # This is the time of the first lick relative to cue onset.
-# - `lick_groups: list of float`\
-# Define intervals of lick times in seconds relative to cue for trial classification.
 #
 # ## Settings specific to YProbe
 # For the `Y` unit structure matlab file, the following settings are available:
@@ -112,7 +113,7 @@ params_global = {
 params_z = params_global.copy()
 params_z.update({
     'first_lick' : (None, None),
-    'lick_groups': [ 0, 0.6, 1.2, 2.4, 4.8 ],
+    'trial_groups': ('dt_lck', [ 0, 0.6, 1.2, 2.4, 4.8 ]),
 })
 
 # parameters for Y unit structure
@@ -121,6 +122,7 @@ params_y.update({
     'only_good' : True,
     'area_code_A': {7, 8},
     'area_code_B': {3, 17},
+    'trial_groups': ('dt_rew', [ 0, 0.5, 1.0, 1.5, 2.0 ]),
 })
 
 # %% [markdown]
@@ -183,9 +185,9 @@ params = params_z
 # load individual probes
 data_root = Path(r'C:\temp\dual_ephys')
 probe1 = Probe(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_JRC_units.mat',
-               lick_groups=params['lick_groups'], bin_size=params['bin_size'], force_overwrite=False)
+               trial_groups=params['trial_groups'], bin_size=params['bin_size'], force_overwrite=False)
 probe2 = Probe(data_root / 'ALM_STR/ZY78_20211015/ZY78_20211015NP_g0_imec0_JRC_units.mat',
-               lick_groups=params['lick_groups'], bin_size=params['bin_size'], force_overwrite=False)
+               trial_groups=params['trial_groups'], bin_size=params['bin_size'], force_overwrite=False)
 
 # combine probes into a recording with descriptive names
 probes = {
@@ -195,7 +197,7 @@ probes = {
 rec = Recording(probes)
 
 # display trial information for ZProbe
-vis.plot_trial_infos_z(rec.df_trl)
+vis.plot_trial_infos(rec.df_trl)
 
 # %% [markdown]
 # ### Selecting units based on probes
@@ -241,11 +243,11 @@ params = params_y
 data_root = Path(r'C:\temp\trip_ephys')
 
 probe1 = Probe(data_root / 'J44-20221008_g0_imec0_JRC_units.mat',
-               bin_size=params['bin_size'], force_overwrite=False)
+               trial_groups=params['trial_groups'], bin_size=params['bin_size'], force_overwrite=False)
 probe2 = Probe(data_root / 'J44-20221008_g0_imec1_JRC_units.mat',
-               bin_size=params['bin_size'], force_overwrite=False)
+               trial_groups=params['trial_groups'], bin_size=params['bin_size'], force_overwrite=False)
 probe3 = Probe(data_root / 'J44-20221008_g0_imec2_JRC_units.mat',
-               bin_size=params['bin_size'], force_overwrite=False)
+               trial_groups=params['trial_groups'], bin_size=params['bin_size'], force_overwrite=False)
 
 probes = {
     'imec0': probe1,
@@ -255,7 +257,7 @@ probes = {
 rec = Recording(probes)
 
 # display trial information for YProbe
-vis.plot_trial_infos_y(rec.df_trl)
+vis.plot_trial_infos(rec.df_trl)
 
 # %% [markdown]
 # ### Selecting units based on area codes
@@ -344,14 +346,23 @@ rrr
 # %%
 # choose parameters to filter data for mode calculation
 params_mode = {
-    'bin_size': 0.1,
-    'rate_src': (1, None), 
-    'spike_width_src': (None, None), 
-    'trial_overlap': 0.9,             
-    'first_lick' : (None, None),
+    'bin_size': 0.2,
     'type_incl': [ 'l_n', ],
+    'subtract_baseline': True,
+    'ramp_interval_1': ('dt_cue', -0.2, 0),
+    'ramp_interval_2': ('dt_rew', -0.2, 0),
 }
 
-X = rec_ops.filter_and_bin(rec1, params_mode)
-df_ramp = rec_ops.get_ramp_mode(X, rec1.df_trl, group='lick_group')
-vis.plot_mode(df_ramp)
+# use data selection method described above, but merge src and trg data
+probe_names = rec.df_unt.loc[:, 'probe'].unique()
+X, Y = rec.select_data_probes(probe_names, probe_names, params_mode)
+Z = pd.concat([X, Y], axis=1)
+
+# calculate and plot ramping mode
+df_ramp = rec.get_ramp_mode(Z, params_mode['ramp_interval_1'], params_mode['ramp_interval_2'])
+vis.plot_mode(df_ramp, hue='dt_rew_group')
+
+# %%
+df_ramp
+
+# %%
