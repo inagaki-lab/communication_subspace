@@ -24,7 +24,6 @@ from pathlib import Path
 from src.recording import Recording
 from src.probe import ZProbe, YProbe
 from src import (
-    recording_operations as rec_ops,
     visualization as vis,
     regression_models as reg,
 )
@@ -349,9 +348,26 @@ params_mode = {
     'bin_size': 0.2,
     'type_incl': [ 'l_n', ],
     'subtract_baseline': True,
-    'ramp_interval_1': ('dt_cue', -0.2, 0),
-    'ramp_interval_2': ('dt_rew', -0.2, 0),
 }
+
+# define modes via their intervals
+modes = {
+    'ramp': {
+        'interval_1': ('dt_cue', -0.2, 0),
+        'interval_2': ('dt_rew', -0.2, 0),
+    },
+    'cue': {
+        'interval_1': ('dt_cue', -0.2, 0),
+        'interval_2': ('dt_cue', 0, 0.2),
+    },
+    'reward': {
+        'interval_1': ('dt_rew', -0.2, 0),
+        'interval_2': ('dt_rew', 0, 0.2),
+    },
+}    
+
+# select one of the modes
+mode = modes['cue']
 
 # use data selection method described above, but merge src and trg data
 probe_names = rec.df_unt.loc[:, 'probe'].unique()
@@ -359,10 +375,7 @@ X, Y = rec.select_data_probes(probe_names, probe_names, params_mode)
 Z = pd.concat([X, Y], axis=1)
 
 # calculate and plot ramping mode
-df_ramp = rec.get_ramp_mode(Z, params_mode['ramp_interval_1'], params_mode['ramp_interval_2'])
-vis.plot_mode(df_ramp, hue='dt_rew_group')
-
-# %%
-df_ramp
+df_ramp = rec.get_ramp_mode(Z, mode['interval_1'], mode['interval_2'])
+vis.plot_mode(df_ramp, group=True)
 
 # %%

@@ -313,9 +313,13 @@ def plot_opt_ranks(df, path=""):
         fig.savefig(path)
         plt.close(fig)
 
-def plot_mode(df_mode, hue=None, path=""):
+def plot_mode(df_mode, group=False, path=""):
 
     fig, ax = plt.subplots()
+    if group:
+        hue = df_mode.columns[df_mode.columns.str.endswith('_group')].item()
+    else:
+        hue = None
     sns.lineplot(ax=ax, data=df_mode, x='bin', y='mode_activity', hue=hue)
     ax.set_xlabel('Time (s)')
     ax.set_ylabel('Mode activity')
