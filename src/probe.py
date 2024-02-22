@@ -484,8 +484,15 @@ class YProbe(BaseProbe):
         typ = beh['stim_type_name']
 
         # response types
-        # 0 no response, 1 small rewarded, 2 large rewarded,3 no sound trial, 4 error trial
         i_res = beh['Trial_types_of_response_vector']
+        res_name = {
+            0: 'no response',
+            1: 'small rewarded',
+            2: 'large rewarded',
+            3: 'no sound trial',
+            4: 'error trial',
+        }
+        res = [ res_name.get(i, 'unknown') for i in i_res ]
 
         # water
         water_small = beh['WaterSmall']
@@ -503,6 +510,21 @@ class YProbe(BaseProbe):
         actual_delay[:] = np.nan
         actual_delay[i_large] = delay[i_large] + offset[i_large]
         actual_delay[i_small] = offset[i_small]
+
+        # trial blocks
+        block_ids = beh['TestTrim_trials']
+        block_names = {
+            0: 'bad block',
+            1: 'before test start',
+            2: 'base line',
+            3: 'base ratio',
+            4: 'no delay',
+            5: 'small ratio test',
+            6: 'delay test',
+            7: 'large ratio test',
+            8: 'error',
+        }
+        blocks = [ block_names.get(b, 'unknown') for b in block_ids ]
         
         # trial index
         trl = np.arange(1, len(dt_rew) + 1)
@@ -519,10 +541,13 @@ class YProbe(BaseProbe):
             'dtf'           : dt_rew + dt_post_rew,
             'trial_type'    : typ,
             'response_id'   : i_res,
+            'response'      : res,
             'water_small'   : water_small,
             'water_large'   : water_large,
             'water_ratio'   : water_ratio,
             'reward_delay'  : actual_delay,
+            'trial_block_id': block_ids,
+            'trial_block'   : blocks,
         })
 
         return df

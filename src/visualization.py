@@ -205,7 +205,7 @@ def plot_trial_infos(df_trl, path=""):
     df.loc[:, "short"] = df.loc[:, "trial_type"].str.split("_").str[:2].str.join("_")
 
     # plot
-    fig, axmat = plt.subplots(figsize=(16, 6), nrows=2, ncols=2)
+    fig, axmat = plt.subplots(figsize=(14, 6), nrows=2, ncols=2)
     axarr = axmat.T.flatten()
 
     ax = axarr[0]
@@ -250,10 +250,20 @@ def plot_trial_infos(df_trl, path=""):
             ax.axvspan(trial, trial+1, color='gray', alpha=0.2, label=label)
             label = None
         ax.set_xlabel('Trial')
-        ax.set_ylabel('Water ratio / Reward delay')
+        ax.set_ylabel('Water ratio / Reward delay [s]')
         ax.legend()
         ax.grid(False)
         ax.margins(x=0)
+
+        ax = axarr[3]
+        ds = df.loc[:, 'trial_block'].astype('category')
+        cat_order = [ 'base line', 'base ratio', 'large ratio test', 'no delay', 'delay test' ]
+        for cat in ds.cat.categories:
+            if cat not in cat_order:
+                ds = ds.cat.remove_categories(cat)
+        ds.cat.reorder_categories(cat_order, ordered=True)
+        df.loc[:, 'trial_block'] = ds
+        sns.histplot(data=df, ax=ax, x="trial_block", hue="response", multiple="stack", shrink=0.8)
 
     fig.tight_layout()
     if path:
