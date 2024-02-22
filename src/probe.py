@@ -484,12 +484,25 @@ class YProbe(BaseProbe):
         typ = beh['stim_type_name']
 
         # response types
+        # 0 no response, 1 small rewarded, 2 large rewarded,3 no sound trial, 4 error trial
         i_res = beh['Trial_types_of_response_vector']
 
         # water
         water_small = beh['WaterSmall']
         water_large = beh['WaterLarge']
         water_ratio = beh['WaterRatio']
+
+        # actual reward delay
+        delay = beh['RewardDelay']
+        offset = beh['RewardOffset']
+
+        i_large = i_res == 2
+        i_small = i_res == 1
+
+        actual_delay = np.empty_like(i_res, dtype=float)
+        actual_delay[:] = np.nan
+        actual_delay[i_large] = delay[i_large] + offset[i_large]
+        actual_delay[i_small] = offset[i_small]
         
         # trial index
         trl = np.arange(1, len(dt_rew) + 1)
@@ -509,6 +522,7 @@ class YProbe(BaseProbe):
             'water_small'   : water_small,
             'water_large'   : water_large,
             'water_ratio'   : water_ratio,
+            'reward_delay'  : actual_delay,
         })
 
         return df
