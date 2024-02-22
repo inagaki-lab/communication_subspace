@@ -205,7 +205,7 @@ def plot_trial_infos(df_trl, path=""):
     df.loc[:, "short"] = df.loc[:, "trial_type"].str.split("_").str[:2].str.join("_")
 
     # plot
-    fig, axmat = plt.subplots(figsize=(12, 6), nrows=2, ncols=2)
+    fig, axmat = plt.subplots(figsize=(16, 6), nrows=2, ncols=2)
     axarr = axmat.T.flatten()
 
     ax = axarr[0]
@@ -237,8 +237,22 @@ def plot_trial_infos(df_trl, path=""):
         _barplot_wrapper(df, "water_ratio", ax)
         ax.set_ylabel("Water ratio")
 
-        ax = ax.twiny()
-        sns.lineplot(df.loc[:, 'water_ratio'], ax=ax, color='C1')
+        ax = axarr[2]
+        x = df.loc[:, 'trial']
+        y = df.loc[:, 'water_ratio']
+        ax.plot(x, y, label='water ratio')
+        
+        y = df.loc[:, 'reward_delay']
+        ax.plot(x, y, label='reward delay')
+
+        label = 'no reward'
+        for trial in df.loc[y != y, 'trial']:
+            ax.axvspan(trial, trial+1, color='gray', alpha=0.2, label=label)
+            label = None
+        ax.set_xlabel('Trial')
+        ax.set_ylabel('Water ratio / Reward delay')
+        ax.legend()
+        ax.grid(False)
         ax.margins(x=0)
 
     fig.tight_layout()
