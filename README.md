@@ -23,7 +23,7 @@ for each script file in the `scripts` folder.
 ## Installation
 ```bash
 # get source code
-git clone https://github.com/bidaye-lab/communication_subspace
+git clone https://github.com/inagaki-lab/communication_subspace
 cd communication_subspace
 
 # create conda environment with necessary dependencies
@@ -33,7 +33,16 @@ conda activate communication_subspace
 # install code as local local python module
 pip install -e .
 
-# convert scripts to notebooks
-jupytext --sync scripts/*.py
+# create notebooks
+python src/create_notebooks.py
 ```
 
+## Update
+```bash
+cd communication_subspace
+git pull origin main
+```
+
+Note that will result in an error, if you have modified any file other than those in the `notebooks` folder.
+To revert any changes, use `git status` to see which files have been modified and then `git reset --hard` to revert the changes.
+Then run the `git pull` command again.
