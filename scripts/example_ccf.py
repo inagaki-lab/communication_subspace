@@ -15,6 +15,9 @@
 # ---
 
 # %%
+# %load_ext autoreload
+# %autoreload 2
+
 import numpy as np
 import pandas as pd 
 from pathlib import Path
@@ -24,6 +27,7 @@ from src.probe import ZProbe, YProbe
 from src import (
     visualization as vis,
     regression_models as reg,
+    cross_correlation as cc,
 )
 
 # %%
@@ -48,58 +52,11 @@ probes = {
 rec = Recording(probes)
 
 # select subset of data
-probe_names = rec.df_unt.loc[:, 'probe'].unique()
-X, Y = rec.select_data_probes(probe_names, probe_names, params)
-Z = pd.concat([X, Y], axis=1).sort_index(axis=1)
+X, Y = rec.select_data_probes('ALM', 'STR', params)
+# Z = pd.concat([X, Y], axis=1).sort_index(axis=1)
 
 # %%
-df = Z.reset_index().groupby('trial').max()
-df
-
-# %%
-bin_max = df.min().loc['bin'].item()
-
-# %%
-type(bin_max.item())
-
-# %%
-mask = Z.index.get_level_values(1) < bin_max
-Z.loc[mask].reset_index().groupby('trial').max()
-
-# %%
-import seaborn as sns
-sns.histplot(df,x='bin')
-
-
-# %%
-
-def calculate_positive_correlation(a, b, lag):
-
-    n = np.sqrt( np.sum(a**2) * np.sum(b**2))
-    b = np.pad(b, (0, lag), mode='constant')
-    c = np.correlate(a, b, mode='valid')
-    c = c / n
-
-    return c
-
-lag = 25
-units_a = Z.loc[:, ('ALM', )].columns
-units_b = Z.loc[:, ('STR', )].columns
-corr = np.zeros((len(units_a), len(units_b), lag+1))
-
-for ia, ua in enumerate(units_a):
-    print(ua)
-    a = Z.loc[:, ('ALM', ua)]
-    a = a.values.astype(np.uint)
-    for ib, ub in enumerate(units_b):
-        b = Z.loc[:, ('STR', ub)]
-        b = b.values.astype(np.uint)
-        c = calculate_positive_correlation(a, b, lag)
-        corr[ia, ib, :] = c
-
-
-# %%
-corr.shape
+df = cc.calculate_cross_correlation(X, Y, lag=0)
 
 
 # %%
