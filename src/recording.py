@@ -426,6 +426,10 @@ class Recording:
             df_src = self._subtract_baseline(df_src)
             df_trg = self._subtract_baseline(df_trg)
 
+        # sort columns
+        df_src = df_src.sort_index(axis=1)
+        df_trg = df_trg.sort_index(axis=1)
+
         return df_src, df_trg
     
     def select_data_probes(self, probes_src, probes_trg, params):
