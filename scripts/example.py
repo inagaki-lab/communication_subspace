@@ -46,11 +46,10 @@ from src import (
 # - `spike_width_trg : (float, float)`\
 # Spike width filter in ms applied to the target (trg) population
 # - `trial_overlap : float`\
-# Percentage of trials filter applied to neurons.
-# Since the valid trial range for individual neurons may differ greatly, 
-# we choose a fraction of trials that we want to keep (0.9 = 90 %).
-# Then, we drop neurons until the remaining neurons cover at least
-# this fraction of the maximum available trial range.
+# Betweeen 0 and 1.
+# Filter units and trials based on `Trial_info.Trial_range_to_analyze`. 
+# Choose first and last trial where `trial_overlap` units are active and discard units that do not cover this range.
+# Also drop trials outside this range.
 # - `type_incl: list of str`\
 # Trial type filter applied to trials.
 # Strings are matched with beginning of `unit(1).Behavior.stim_type_name` strings.
@@ -101,7 +100,7 @@ params_global = {
     'rate_trg': (1, None),
     'spike_width_src': (None, None), 
     'spike_width_trg': (  .5, None),
-    'trial_overlap': 0.0,             
+    'trial_overlap': 0.7,             
     'type_incl': [ 'l_n', ],
     'scoring': 'r2',
     'subtract_baseline': True,
