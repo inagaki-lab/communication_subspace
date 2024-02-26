@@ -225,15 +225,15 @@ class Recording:
         self.df_unt.loc[:, 'incl_spike_width'].fillna(False, inplace=True)
 
     def _filter_trial_overlap(self, thresh):
-        '''Filter units based on trial overlap.
+        '''Filter units and trials based on trial overlap.
 
         Adds columns `incl_trial_overlap` to `self.df_unt` and `self.df_trl`
         with boolean values.
 
-        Because not all units cover the whole recording,
-        dropping units can increase the total time overlap.
-        Here, units with the lowest overlap are dropped 
-        iteratively until the total overlap is just above `thresh`.
+        Adds column `avg_trial_act` to `self.df_trl` with average activity.
+
+        This method determines the fraction of units that are active in each trial,
+        then chooses the first and the last trial above `thresh` as the valid trial range.
 
         Parameters
         ----------
@@ -241,50 +241,23 @@ class Recording:
             Fraction of trials to keep
         '''
 
-        m = self.df_unt.loc[:, ['incl_spike_width', 'incl_firing_rate']].all(axis=1)
-        df_unt = self.df_unt.loc[m, :]
-        all_unts = df_unt.loc[: ,['probe', 'unit']]
+        n_trl = self.df_trl.max().loc['trial']
+        n_unt = len(self.df_unt)
+        activity = np.zeros((n_unt, n_trl), dtype=int)
+        for i, row in self.df_unt.iterrows():
+            activity[i, row['first_trial'] - 1 : row['last_trial']] = 1
+        average_activity = np.mean(activity, axis=0)
+        self.df_trl.loc[:, 'avg_trial_act'] = average_activity
 
-        # create valid trial matrix: trial x units
-        trl_max = df_unt.loc[:, 'last_trial'].max()
-        n_unt = len(all_unts)
+        active = np.flatnonzero(average_activity > thresh)
+        first_active = active[0] + 1
+        last_active = active[-1] + 1
 
-        x = np.zeros((trl_max, n_unt))
-        for i in range(n_unt):
-            first, last = df_unt.iloc[i, :].loc[['first_trial', 'last_trial']].astype(int)
-            x[first - 1 : last - 1, i] = 1
+        self.df_trl.loc[:, 'incl_trial_overlap'] = self.df_trl.loc[:, 'trial'].between(first_active, last_active)
 
-        x = x.astype(bool)
-
-        # sort units by trial overlap
-        idx, tot = [], [] # `idx` is index in `all_unts` and `tot` is trial overlap before removing this unit
-        for _ in range(n_unt):
-            l = np.all(x, axis=1).sum()
-            tot.append(l)
-            i = np.argmin(x.sum(axis=0))
-            idx.append(i)
-            x[:, i] = True
-
-        all_unts = all_unts.iloc[idx, :]
-        tot = np.array(tot)
-        tot = tot / trl_max # trial overlap in %
-
-        # select based on overlap threshold
-        m = tot > thresh
-        unts = all_unts.loc[m, :]
-
-        # choose units to keep
-        self.df_unt.loc[:, 'incl_trial_overlap'] = False
-        self.df_unt.loc[unts.index, 'incl_trial_overlap'] = True
-
-        # choose trials to keep
-        trl_min = self.df_unt.loc[unts.index, 'first_trial'].min()
-        trl_max = self.df_unt.loc[unts.index, 'last_trial'].max()
-        if (trl_min != trl_min) or (trl_max != trl_max):
-            trls = set()
-        else:
-            trls = { *range(trl_min, trl_max + 1) }
-        self.df_trl.loc[:, 'incl_trial_overlap'] = self.df_trl.loc[:, 'trial'].isin(trls)
+        m_first = self.df_unt.loc[:, 'first_trial'] >= first_active
+        m_last = self.df_unt.loc[:, 'last_trial'] <= last_active 
+        self.df_unt.loc[:, 'incl_trial_overlap'] = m_first & m_last
 
     def _filter_good_units(self, only_good):
         '''Filter units based on good_unit column.
@@ -386,9 +359,9 @@ class Recording:
         if 'only_good' in params:
             self._filter_good_units(params['only_good'])
 
-        # # filter trials and units
-        # if 'trial_overlap' in params:
-        #     self._filter_trial_overlap(params['trial_overlap'])
+        # filter trials and units
+        if 'trial_overlap' in params:
+            self._filter_trial_overlap(params['trial_overlap'])
 
         # select trials left after filtering
         cols_incl = self.df_trl.columns.str.startswith('incl_')
