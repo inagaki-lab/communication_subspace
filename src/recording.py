@@ -89,52 +89,45 @@ class Recording:
             Keep trials in which `trial_type` start with `str`
         '''
         
-        # filter based on trial type
         tt = self.df_trl.loc[:, 'trial_type']
+        if not type_incl:
+            type_incl = [''] # include all trials if type_incl is empty
 
-        if type_incl:
-            # only trials starting with strings defined in type_incl
-            l_ds = [ tt.str.startswith(s) for s in type_incl ]
-            df = pd.concat(l_ds, axis=1)
-            m_tt = df.any(axis=1)
-
-        else:
-            # all trials
-            m_tt = tt == tt
-        
-        self.df_trl.loc[~m_tt, 'incl_trial_type'] = False
-        self.df_trl.loc[m_tt, 'incl_trial_type'] = True
+        self.df_trl['incl_trial_type'] = tt.str.startswith(tuple(type_incl))
 
 
+    def _filter_trials(self, min_max, col):
+        '''Filter trials based on if `col` is in between `min_max`.
 
-    def _filter_first_lick_time(self, first_lick):
-        '''Filter trials based on first lick time.
+        Lower limit is inclusive, upper limit is exclusive.
 
-        Adds a column `incl_first_lick` to `self.df_trl` with boolean values.
+        Adds a column `incl_{col}` to `self.df_trl` with boolean values.
 
         Parameters
         ----------
-        first_lick : tuple
-            Keep trials in which lick time is between `first_lick[0]` and `first_lick[1]`.
+        min_max : tuple
+            Keep trials in which `col` is between `min_max[0]` and `min_max[1]`.
             If None, no upper/lower limit is applied.
         '''
         
-        # filter based on lick time
-        lck_min, lck_max = first_lick
+        x_min, x_max = min_max
         
-        lck = self.df_trl.loc[:, 'dt_lck']
-        m_lck = lck == lck # DataSeries with all True for not nan
+        x = self.df_trl.loc[:, col]
+        m_x = x == x # DataSeries with all True for not nan
 
-        if lck_min is not None:
-            m = lck > lck_min
-            m_lck = m_lck & m
+        if x_min is not None:
+            m = x >= x_min
+            m_x = m_x & m
         
-        if lck_max is not None:
-            m = lck < lck_max
-            m_lck = m_lck & m
+        if x_max is not None:
+            m = x < x_max
+            m_x = m_x & m
         
-        self.df_trl.loc[~m_lck, 'incl_first_lick'] = False
-        self.df_trl.loc[m_lck, 'incl_first_lick'] = True
+        self.df_trl.loc[~m_x, f'incl_{col}'] = False
+        self.df_trl.loc[m_x, f'incl_{col}'] = True
+        self.df_trl[f'incl_{col}'] = self.df_trl[f'incl_{col}'].astype(bool)
+
+
 
     def _filter_firing_rate(self, r_min, r_max, df_bin=None):
         '''Filter units based on firing rate.
@@ -230,7 +223,7 @@ class Recording:
         Adds columns `incl_trial_overlap` to `self.df_unt` and `self.df_trl`
         with boolean values.
 
-        Adds column `avg_trial_act` to `self.df_trl` with average activity.
+        Adds column `avg_unit_act` to `self.df_trl` with average activity.
 
         This method determines the fraction of units that are active in each trial,
         then chooses the first and the last trial above `thresh` as the valid trial range.
@@ -247,7 +240,7 @@ class Recording:
         for i, row in self.df_unt.iterrows():
             activity[i, row['first_trial'] - 1 : row['last_trial']] = 1
         average_activity = np.mean(activity, axis=0)
-        self.df_trl.loc[:, 'avg_trial_act'] = average_activity
+        self.df_trl.loc[:, 'avg_unit_act'] = average_activity
 
         active = np.flatnonzero(average_activity > thresh)
         first_active = active[0] + 1
@@ -343,7 +336,11 @@ class Recording:
         if 'type_incl' in params:
             self._filter_trial_types(params['type_incl'])
         if 'first_lick' in params:
-            self._filter_first_lick_time(params['first_lick'])
+            self._filter_trials(params['first_lick'], 'dt_lck')
+        if 'water_ratio' in params:
+            self._filter_trials(params['water_ratio'], 'water_ratio')
+        if 'reward_delay' in params:
+            self._filter_trials(params['reward_delay'], 'reward_delay')
 
         # filter units        
         if 'spike_width_src' in params:

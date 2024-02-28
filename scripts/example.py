@@ -120,7 +120,9 @@ params_y.update({
     'only_good' : True,
     'area_code_A': {7, 8},
     'area_code_B': {3, 17},
-    'trial_groups': ('dt_rew', [ 0, 0.5, 1.0, 1.5, 2.0 ]),
+    'water_ratio': (None, 3),
+    'reward_delay': (.4, None),
+    'trial_groups': ('dt_rew', [ 0, 1.0, 2.0 ]),
 })
 
 # %% [markdown]
@@ -273,9 +275,9 @@ X, Y = rec.select_data_area_code(
 if len(X.columns) < params['min_units_src']:
     print('WARNING: Too few units in source recording!')
 
-# optional: filter some epoch
-X = rec.select_epoch(X, epochs['pre_cue'])
-Y = rec.select_epoch(Y, epochs['pre_cue'])
+# # optional: filter some epoch
+# X = rec.select_epoch(X, epochs['pre_cue'])
+# Y = rec.select_epoch(Y, epochs['pre_cue'])
 
 # %% [markdown]
 # # Model fitting
