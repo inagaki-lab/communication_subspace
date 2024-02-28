@@ -39,8 +39,13 @@ python src/create_notebooks.py
 
 ## Update
 ```bash
+# pull from github
 cd communication_subspace
 git pull origin main
+
+# recreate notebooks
+conda activate communication_subspace
+python src/create_notebooks.py
 ```
 
 Note that will result in an error, if you have modified any file other than those in the `notebooks` folder.
