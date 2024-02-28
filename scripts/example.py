@@ -63,6 +63,8 @@ from src import (
 # - `subtract_baseline : bool`\
 # whether or not to subtract baseline.
 # This subtracts the average firing rate during pre cue period per trial
+# - `baseline_period : (float, float)`\
+# Defines the baseline period in seconds relative to cue onset. Must be defined if `subtract_baseline` is `True`.
 # - `min_units_src : int`\
 # Minimum number of units in source population.
 # This will skip the analysis in batch mode.
@@ -104,6 +106,7 @@ params_global = {
     'type_incl': [ 'l_n', ],
     'scoring': 'r2',
     'subtract_baseline': True,
+    'baseline_period': (-2, 0), 
     'min_units_src': 5,
 }
 

@@ -268,7 +268,7 @@ class Recording:
         else:
             self.df_unt.loc[:, 'incl_good_unit'] = True
 
-    def _subtract_baseline(self, df_bin, interval=(-2.0, 0.0)):
+    def _subtract_baseline(self, df_bin, interval):
         '''Subtract baseline firing rate from binned spikes.
 
         Returns new dataframe with same basis as `df_bin`, 
@@ -393,8 +393,8 @@ class Recording:
 
         # subtract baseline
         if params.get('subtract_baseline', False):
-            df_src = self._subtract_baseline(df_src)
-            df_trg = self._subtract_baseline(df_trg)
+            df_src = self._subtract_baseline(df_src, interval=params['baseline_period'])
+            df_trg = self._subtract_baseline(df_trg, interval=params['baseline_period'])
 
         # sort columns
         df_src = df_src.sort_index(axis=1)
