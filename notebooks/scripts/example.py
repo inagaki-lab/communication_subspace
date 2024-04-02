@@ -336,6 +336,7 @@ params_mode = {
     'bin_size': 0.2,
     'type_incl': [ 'l_n', ],
     'subtract_baseline': True,
+    'baseline_period': (-2, 0),
 }
 
 # define modes via their intervals
