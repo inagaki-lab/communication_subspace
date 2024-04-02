@@ -56,7 +56,7 @@ X, Y = rec.select_data_probes('ALM', 'STR', params)
 # Z = pd.concat([X, Y], axis=1).sort_index(axis=1)
 
 # %%
-df = cc.calculate_cross_correlation(X, Y, lag=0)
+cc.calculate_cross_correlation(X.iloc[:, :3], Y.iloc[:, :3], lag=3, n_shuffle=3)
 
 
 # %%
